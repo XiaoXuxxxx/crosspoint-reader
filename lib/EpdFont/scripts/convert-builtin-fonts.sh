@@ -36,14 +36,15 @@ for size in ${UI_FONT_SIZES[@]}; do
     font_name="ubuntu_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/Ubuntu/Ubuntu-${style}.ttf"
     hebrew_path="../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-${style}.ttf"
+    thai_path="../builtinFonts/source/NotoSansThai/NotoSansThai-${style}.ttf"
     # Ubuntu lacks the Latin Extended Additional block (U+1EA0-U+1EF9) used for
     # Vietnamese tone marks. Append a Vietnamese-only Ubuntu cut so those glyphs
     # are filled from it while every glyph Ubuntu already has stays unchanged
     # (fontstack is ordered by descending priority).
     viet_path="../builtinFonts/source/Ubuntu/Ubuntu-Vietnamese-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $hebrew_path $viet_path \
-      --additional-intervals 0x05D0,0x05EA > $output_path
+    python fontconvert.py $font_name $size $font_path $hebrew_path $thai_path $viet_path \
+      --additional-intervals 0x05D0,0x05EA --additional-intervals 0x0E00,0x0E7F > $output_path
     echo "Generated $output_path"
   done
 done
@@ -51,28 +52,35 @@ done
 python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSans/NotoSans-Regular.ttf \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
-  --additional-intervals 0x05D0,0x05EA > ../builtinFonts/notosans_8_regular.h
+  ../builtinFonts/source/NotoSansThai/NotoSansThai-Regular.ttf \
+  --additional-intervals 0x05D0,0x05EA --additional-intervals 0x0E00,0x0E7F > ../builtinFonts/notosans_8_regular.h
 
 # Thai fonts — flash fallback for Thai script.
 # Sans Thai at 10/12/16pt: 10 and 12 match UI font sizes, 16 matches reading view.
 # Serif Thai at 16pt only: reading view fallback (UI is sans-serif, no need for smaller serif).
+# Note: Thai script has no italic/oblique variants (only Regular and Bold).
 THAI_SANS_FONT_SIZES=(10 12 16)
 THAI_SERIF_FONT_SIZES=(16)
+THAI_STYLES=("Regular" "Bold")
 for size in ${THAI_SANS_FONT_SIZES[@]}; do
-  font_name="notosansthai_${size}_regular"
-  font_path="../builtinFonts/source/NotoSansThai/NotoSansThai-Regular.ttf"
-  output_path="../builtinFonts/${font_name}.h"
-  python3 fontconvert.py $font_name $size $font_path --2bit --compress --pnum \
-    --additional-intervals 0x0E00,0x0E7F > $output_path
-  echo "Generated $output_path"
+  for style in ${THAI_STYLES[@]}; do
+    font_name="notosansthai_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    font_path="../builtinFonts/source/NotoSansThai/NotoSansThai-${style}.ttf"
+    output_path="../builtinFonts/${font_name}.h"
+    python3 fontconvert.py $font_name $size $font_path --2bit --compress --pnum \
+      --additional-intervals 0x0E00,0x0E7F > $output_path
+    echo "Generated $output_path"
+  done
 done
 for size in ${THAI_SERIF_FONT_SIZES[@]}; do
-  font_name="notoserifthai_${size}_regular"
-  font_path="../builtinFonts/source/NotoSerifThai/NotoSerifThai-Regular.ttf"
-  output_path="../builtinFonts/${font_name}.h"
-  python3 fontconvert.py $font_name $size $font_path --2bit --compress --pnum \
-    --additional-intervals 0x0E00,0x0E7F > $output_path
-  echo "Generated $output_path"
+  for style in ${THAI_STYLES[@]}; do
+    font_name="notoserifthai_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    font_path="../builtinFonts/source/NotoSerifThai/NotoSerifThai-${style}.ttf"
+    output_path="../builtinFonts/${font_name}.h"
+    python3 fontconvert.py $font_name $size $font_path --2bit --compress --pnum \
+      --additional-intervals 0x0E00,0x0E7F > $output_path
+    echo "Generated $output_path"
+  done
 done
 
 echo ""

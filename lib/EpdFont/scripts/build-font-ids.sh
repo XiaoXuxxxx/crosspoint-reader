@@ -83,24 +83,28 @@ ruby -rdigest -e 'puts [
 echo "#define NOTOSANSTHAI_10_FONT_ID ($(
 ruby -rdigest -e 'puts [
   "./notosansthai_10_regular.h",
+  "./notosansthai_10_bold.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
 echo "#define NOTOSANSTHAI_12_FONT_ID ($(
 ruby -rdigest -e 'puts [
   "./notosansthai_12_regular.h",
+  "./notosansthai_12_bold.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
 echo "#define NOTOSANSTHAI_16_FONT_ID ($(
 ruby -rdigest -e 'puts [
   "./notosansthai_16_regular.h",
+  "./notosansthai_16_bold.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
 echo "#define NOTOSERIFTHAI_16_FONT_ID ($(
 ruby -rdigest -e 'puts [
   "./notoserifthai_16_regular.h",
+  "./notoserifthai_16_bold.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 

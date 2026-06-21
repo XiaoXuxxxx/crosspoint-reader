@@ -95,16 +95,20 @@ EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, 
                                    &notosans18BoldItalicFont);
 
 EpdFont notosansthai10RegularFont(&notosansthai_10_regular);
-EpdFontFamily notosansthai10FontFamily(&notosansthai10RegularFont);
+EpdFont notosansthai10BoldFont(&notosansthai_10_bold);
+EpdFontFamily notosansthai10FontFamily(&notosansthai10RegularFont, &notosansthai10BoldFont);
 
 EpdFont notosansthai12RegularFont(&notosansthai_12_regular);
-EpdFontFamily notosansthai12FontFamily(&notosansthai12RegularFont);
+EpdFont notosansthai12BoldFont(&notosansthai_12_bold);
+EpdFontFamily notosansthai12FontFamily(&notosansthai12RegularFont, &notosansthai12BoldFont);
 
 EpdFont notosansthai16RegularFont(&notosansthai_16_regular);
-EpdFontFamily notosansthai16FontFamily(&notosansthai16RegularFont);
+EpdFont notosansthai16BoldFont(&notosansthai_16_bold);
+EpdFontFamily notosansthai16FontFamily(&notosansthai16RegularFont, &notosansthai16BoldFont);
 
 EpdFont notoserifthai16RegularFont(&notoserifthai_16_regular);
-EpdFontFamily notoserifthai16FontFamily(&notoserifthai16RegularFont);
+EpdFont notoserifthai16BoldFont(&notoserifthai_16_bold);
+EpdFontFamily notoserifthai16FontFamily(&notoserifthai16RegularFont, &notoserifthai16BoldFont);
 
 #endif  // OMIT_FONTS
 
