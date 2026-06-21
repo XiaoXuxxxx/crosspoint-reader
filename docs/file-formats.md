@@ -90,6 +90,14 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 28
+
+Thai base characters (U+0E01–0E30, U+0E32–0E33, U+0E40–0E46, U+0E4F–0E59,
+U+0E5A–0E5B) added to the CJK break-opportunity set. Thai words are now
+split at every base character for character-level line breaking (same
+pattern as CJK/Korean). Old section caches with pre-Thai word lists are
+invalidated.
+
 ### Version 25
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is

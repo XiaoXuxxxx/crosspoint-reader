@@ -41,7 +41,12 @@ inline bool utf8IsCjkBreakable(const uint32_t cp) {
          || (cp >= 0xFF01 && cp <= 0xFF60)     // Fullwidth Latin / Punctuation
          || (cp >= 0xFF65 && cp <= 0xFFEF)     // Halfwidth Katakana / Hangul
          || (cp >= 0x20000 && cp <= 0x2A6DF)   // CJK Extension B
-         || (cp >= 0x2A700 && cp <= 0x2B73F);  // CJK Extension C
+         || (cp >= 0x2A700 && cp <= 0x2B73F)  // CJK Extension C
+         || (cp >= 0x0E01 && cp <= 0x0E30)    // Thai consonants + Sara A (base, breakable)
+         || (cp >= 0x0E32 && cp <= 0x0E33)    // Thai Sara Aa + Sara Am (base, breakable)
+         || (cp >= 0x0E40 && cp <= 0x0E46)    // Thai preposed vowels + Maiyamok (base)
+         || (cp >= 0x0E4F && cp <= 0x0E59)    // Thai Fongman + digits (base)
+         || (cp >= 0x0E5A && cp <= 0x0E5B);   // Thai punctuation (base)
 }
 
 // Returns true for Unicode combining diacritical marks that should not advance the cursor.
@@ -49,5 +54,66 @@ inline bool utf8IsCombiningMark(const uint32_t cp) {
   return (cp >= 0x0300 && cp <= 0x036F)      // Combining Diacritical Marks
          || (cp >= 0x1DC0 && cp <= 0x1DFF)   // Combining Diacritical Marks Supplement
          || (cp >= 0x20D0 && cp <= 0x20FF)   // Combining Diacritical Marks for Symbols
-         || (cp >= 0xFE20 && cp <= 0xFE2F);  // Combining Half Marks
+         || (cp >= 0xFE20 && cp <= 0xFE2F)   // Combining Half Marks
+         || (cp == 0x0E31)                   // Thai Mai Han-Akat (above)
+         || (cp >= 0x0E34 && cp <= 0x0E3A)   // Thai vowels above (0E34-0E37) + below (0E38-0E3A)
+         || (cp >= 0x0E47 && cp <= 0x0E4E);  // Thai Mai Tai Khue + tone marks + Nikhahit + above-top
+}
+
+// Returns true for Thai combining marks (above-vowels, below-vowels, tone marks, etc.).
+// Used to apply Thai-specific mark positioning (post-base pen position) instead of
+// the generic centerOver() approach.
+inline bool utf8IsThaiCombiningMark(const uint32_t cp) {
+  return (cp == 0x0E31)                   // Thai Mai Han-Akat (above)
+         || (cp >= 0x0E34 && cp <= 0x0E3A)   // Thai vowels above (0E34-0E37) + below (0E38-0E3A)
+         || (cp >= 0x0E47 && cp <= 0x0E4E);  // Thai Mai Tai Khue + tone marks + Nikhahit + above-top
+}
+
+// Thai combining mark vertical level, aligned with libthai (thctype.c th_chlevel).
+// ABOVE1: above-vowels closest to base (libthai level 1)
+// ABOVE2: hilo-or-top marks — Mai Tai Khue, Nikhahit (libthai level 3)
+// ABOVE3: tone marks + thanthakhat (libthai level 2 / top)
+// BELOW1: below-vowels closest to base (libthai level -1)
+// BELOW2: Phinthu, lowest (libthai level -1)
+enum class ThaiMarkLevel : uint8_t {
+  None = 0,  // Not a Thai mark (Latin/Hebrew mark or base character)
+  Above1,    // U+0E31, U+0E34-0E37, U+0E4E (vowels + Mai Yamok above, closest to base)
+  Above2,    // U+0E47, U+0E4D (Mai Tai Khue, Nikhahit — hilo-or-top)
+  Above3,    // U+0E48-0E4C (tone marks + thanthakhat — top)
+  Below1,    // U+0E38-0E39 (vowels below, closest)
+  Below2,    // U+0E3A (Phinthu, lowest)
+};
+
+// Returns the Thai mark vertical level, or None if cp is not a Thai combining mark.
+// Classification follows libthai th_chlevel: U+0E4E is level 1 (with vowels),
+// U+0E4C is level 2 (with tone marks), U+0E47/U+0E4D are level 3 (hilo-or-top).
+inline ThaiMarkLevel thaiMarkLevel(const uint32_t cp) {
+  if (cp == 0x0E31 || (cp >= 0x0E34 && cp <= 0x0E37) || cp == 0x0E4E) return ThaiMarkLevel::Above1;
+  if (cp == 0x0E47 || cp == 0x0E4D) return ThaiMarkLevel::Above2;
+  if (cp >= 0x0E48 && cp <= 0x0E4C) return ThaiMarkLevel::Above3;
+  if (cp >= 0x0E38 && cp <= 0x0E39) return ThaiMarkLevel::Below1;
+  if (cp == 0x0E3A) return ThaiMarkLevel::Below2;
+  return ThaiMarkLevel::None;
+}
+
+// Thai consonant class for mark positioning, aligned with libthai (thctype.c).
+// Ascenders (overshoot) have a tall left stem — above-marks shift LEFT to clear it.
+// Descenders (undershoot) extend below baseline — below-marks need extra lowering.
+// Undersplit consonants have a split part below baseline — below-marks need extra
+// lowering like descenders, and the split tail may need special handling.
+enum class ThaiConsonantClass : uint8_t {
+  Regular = 0,
+  Ascender,    // ป ฝ ฟ ฬ (U+0E1B, U+0E1D, U+0E1F, U+0E2C) — tall left stem
+  Descender,   // ฎ ฏ (U+0E0E, U+0E0F) — extends below baseline
+  Undersplit,  // ญ ฐ (U+0E0D, U+0E10) — split part below baseline
+};
+
+constexpr ThaiConsonantClass thaiConsonantClass(const uint32_t cp) {
+  // Ascenders (overshoot): ป (U+0E1B), ฝ (U+0E1D), ฟ (U+0E1F), ฬ (U+0E2C)
+  if (cp == 0x0E1B || cp == 0x0E1D || cp == 0x0E1F || cp == 0x0E2C) return ThaiConsonantClass::Ascender;
+  // Descenders (undershoot): ฎ (U+0E0E), ฏ (U+0E0F)
+  if (cp == 0x0E0E || cp == 0x0E0F) return ThaiConsonantClass::Descender;
+  // Undersplit: ญ (U+0E0D), ฐ (U+0E10) — split tail below baseline
+  if (cp == 0x0E0D || cp == 0x0E10) return ThaiConsonantClass::Undersplit;
+  return ThaiConsonantClass::Regular;
 }

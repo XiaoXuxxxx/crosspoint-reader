@@ -19,6 +19,13 @@ void EpdFont::getTextBounds(const char* string, const int startX, const int star
   int lastBaseLeft = 0;
   int lastBaseWidth = 0;
   int lastBaseTop = 0;
+  int lastBaseHeight = 0;
+  int lastMarkTop = 0;
+  uint32_t lastBaseCp = 0;
+  // Thai cell-slot occupancy (libthai thcell.c model)
+  bool hiloOccupied = false;
+  bool topOccupied = false;
+  bool belowOccupied = false;
   int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
   uint32_t cp;
   uint32_t prevCp = 0;
@@ -40,11 +47,65 @@ void EpdFont::getTextBounds(const char* string, const int startX, const int star
         lastBaseLeft = 0;
         lastBaseWidth = 0;
         lastBaseTop = 0;
+        lastBaseHeight = 0;
+        lastBaseCp = 0;
+        lastMarkTop = 0;
+        hiloOccupied = false;
+        topOccupied = false;
+        belowOccupied = false;
       }
       continue;
     }
 
-    const int raiseBy = isCombining ? combiningMark::raiseAboveBase(glyph->top, glyph->height, lastBaseTop) : 0;
+    const ThaiMarkLevel level = thaiMarkLevel(cp);
+    const bool isThaiBelowMark = (level == ThaiMarkLevel::Below1 || level == ThaiMarkLevel::Below2);
+
+    // Thai composibility checks (WTT table, libthai thcell.c):
+    // - Reject mark if no valid base
+    // - Reject second above-vowel (AV1+AV2)
+    // - Reject consecutive tone marks
+    // - Reject second below-vowel
+    // - Level 3 marks (็ U+0E47, ญ U+0E4D): route to hilo if empty, else top
+    if (isCombining && level != ThaiMarkLevel::None) {
+      if (lastBaseCp == 0) continue;
+      if (isThaiBelowMark) {
+        if (belowOccupied) continue;
+        belowOccupied = true;
+      } else if (level == ThaiMarkLevel::Above2) {
+        // Level 3 hilo-or-top routing
+        if (!hiloOccupied) {
+          hiloOccupied = true;
+        } else {
+          topOccupied = true;
+        }
+      } else if (level == ThaiMarkLevel::Above1) {
+        if (hiloOccupied) continue;
+        hiloOccupied = true;
+      } else if (level == ThaiMarkLevel::Above3) {
+        if (topOccupied) continue;
+        topOccupied = true;
+      }
+    }
+
+    // Aligned with libthai: above-marks use level=1 gap; stacking via lastMarkTop
+    // handles vertical tiering (tone on vowel = higher, tone on base = lower).
+    int adjustY = 0;
+    if (isCombining) {
+      if (isThaiBelowMark) {
+        adjustY = combiningMark::lowerBelowBase(glyph->top, lastBaseTop - lastBaseHeight,
+                                                static_cast<int>(level) - static_cast<int>(ThaiMarkLevel::Below1) + 1);
+        // Extra lowering for descender and undersplit (tail-cut approximation)
+        const ThaiConsonantClass cc = thaiConsonantClass(lastBaseCp);
+        if (cc == ThaiConsonantClass::Descender) {
+          adjustY += glyph->height / 2;
+        } else if (cc == ThaiConsonantClass::Undersplit) {
+          adjustY += glyph->height;
+        }
+      } else {
+        adjustY =
+            combiningMark::raiseAboveBase(glyph->top, glyph->height, (lastMarkTop != 0) ? lastMarkTop : lastBaseTop, 1);
+      }
+    }
 
     if (!isCombining && prevCp != 0) {
       const auto kernFP = getKerning(prevCp, cp);  // 4.4 fixed-point kern
@@ -52,19 +113,30 @@ void EpdFont::getTextBounds(const char* string, const int startX, const int star
     }
 
     const int glyphBaseX =
-        isCombining ? combiningMark::centerOver(lastBaseX, lastBaseLeft, lastBaseWidth, glyph->left, glyph->width)
+        isCombining ? getCombiningAnchorX(fp4::fromPixel(lastBaseX) + prevAdvanceFP, lastBaseX, prevAdvanceFP, cp)
                     : lastBaseX;
-    const int glyphBaseY = startY - raiseBy;
+    const int glyphBaseY =
+        startY - (isCombining && !isThaiBelowMark ? adjustY : 0) + (isCombining && isThaiBelowMark ? adjustY : 0);
 
     *minX = std::min(*minX, glyphBaseX + glyph->left);
     *maxX = std::max(*maxX, glyphBaseX + glyph->left + glyph->width);
     *minY = std::min(*minY, glyphBaseY + glyph->top - glyph->height);
     *maxY = std::max(*maxY, glyphBaseY + glyph->top);
 
+    if (isCombining && !isThaiBelowMark) {
+      lastMarkTop = glyph->top - adjustY;
+    }
+
     if (!isCombining) {
       lastBaseLeft = glyph->left;
       lastBaseWidth = glyph->width;
       lastBaseTop = glyph->top;
+      lastBaseHeight = glyph->height;
+      lastBaseCp = cp;
+      lastMarkTop = 0;
+      hiloOccupied = false;
+      topOccupied = false;
+      belowOccupied = false;
       prevAdvanceFP = glyph->advanceX;  // 12.4 fixed-point
       prevCp = cp;
     }

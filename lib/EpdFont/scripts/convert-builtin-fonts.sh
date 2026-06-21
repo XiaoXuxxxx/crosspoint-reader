@@ -53,6 +53,28 @@ python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
   --additional-intervals 0x05D0,0x05EA > ../builtinFonts/notosans_8_regular.h
 
+# Thai fonts — flash fallback for Thai script.
+# Sans Thai at 10/12/16pt: 10 and 12 match UI font sizes, 16 matches reading view.
+# Serif Thai at 16pt only: reading view fallback (UI is sans-serif, no need for smaller serif).
+THAI_SANS_FONT_SIZES=(10 12 16)
+THAI_SERIF_FONT_SIZES=(16)
+for size in ${THAI_SANS_FONT_SIZES[@]}; do
+  font_name="notosansthai_${size}_regular"
+  font_path="../builtinFonts/source/NotoSansThai/NotoSansThai-Regular.ttf"
+  output_path="../builtinFonts/${font_name}.h"
+  python3 fontconvert.py $font_name $size $font_path --2bit --compress --pnum \
+    --additional-intervals 0x0E00,0x0E7F > $output_path
+  echo "Generated $output_path"
+done
+for size in ${THAI_SERIF_FONT_SIZES[@]}; do
+  font_name="notoserifthai_${size}_regular"
+  font_path="../builtinFonts/source/NotoSerifThai/NotoSerifThai-Regular.ttf"
+  output_path="../builtinFonts/${font_name}.h"
+  python3 fontconvert.py $font_name $size $font_path --2bit --compress --pnum \
+    --additional-intervals 0x0E00,0x0E7F > $output_path
+  echo "Generated $output_path"
+done
+
 echo ""
 echo "Running compression verification..."
 python verify_compression.py ../builtinFonts/

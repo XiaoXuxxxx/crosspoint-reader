@@ -63,6 +63,14 @@ families:
       italic:     {url: "https://raw.githubusercontent.com/notofonts/NotoSerif-Italic/main/fonts/ttf/unhinted/instance_ttf/NotoSerif-Italic.ttf"}
       bolditalic: {url: "https://raw.githubusercontent.com/notofonts/NotoSerif-Italic/main/fonts/ttf/unhinted/instance_ttf/NotoSerif-BoldItalic.ttf"}
 
+  - name: NotoSerifThai
+    description: "Thai serif (Thai script)"
+    intervals: thai
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular:    {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/notoserifthai/NotoSerifThai%5Bwdth%2Cwght%5D.ttf", variable: {wdth: 100, wght: 400}}
+      bold:       {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/notoserifthai/NotoSerifThai%5Bwdth%2Cwght%5D.ttf", variable: {wdth: 100, wght: 700}}
+
   - name: Merriweather
     description: "Warm serif for long-form reading (Latin, Cyrillic)"
     intervals: latin-ext,cyrillic
@@ -145,6 +153,32 @@ families:
       bold:       {path: "builtinFonts/source/NotoSans/NotoSans-Bold.ttf"}
       italic:     {path: "builtinFonts/source/NotoSans/NotoSans-Italic.ttf"}
       bolditalic: {path: "builtinFonts/source/NotoSans/NotoSans-BoldItalic.ttf"}
+
+  - name: NotoSansThai
+    description: "Thai sans-serif loopless (Thai script)"
+    intervals: thai
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular:    {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansthai/NotoSansThai%5Bwdth%2Cwght%5D.ttf", variable: {wdth: 100, wght: 400}}
+      bold:       {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansthai/NotoSansThai%5Bwdth%2Cwght%5D.ttf", variable: {wdth: 100, wght: 700}}
+
+  - name: NotoSansThaiLooped
+    description: "Thai sans-serif looped (Thai script, traditional looped strokes)"
+    intervals: latin-ext,thai
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular:    {url: "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSansThaiLooped/googlefonts/variable-ttf/NotoSansThaiLooped%5Bwdth%2Cwght%5D.ttf", variable: {wdth: 100, wght: 400}}
+      bold:       {url: "https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts/NotoSansThaiLooped/googlefonts/variable-ttf/NotoSansThaiLooped%5Bwdth%2Cwght%5D.ttf", variable: {wdth: 100, wght: 700}}
+
+  - name: Sarabun
+    description: "Thai sans-serif by Cadson Demak (Thai + Latin)"
+    intervals: latin-ext,thai
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular:    {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/sarabun/Sarabun-Regular.ttf"}
+      bold:       {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/sarabun/Sarabun-Bold.ttf"}
+      italic:     {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/sarabun/Sarabun-Italic.ttf"}
+      bolditalic: {url: "https://raw.githubusercontent.com/google/fonts/main/ofl/sarabun/Sarabun-BoldItalic.ttf"}
 
   - name: Inter
     description: "Modern sans-serif (Latin, Greek, Cyrillic)"

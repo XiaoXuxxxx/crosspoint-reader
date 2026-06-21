@@ -2,6 +2,8 @@
 // https://github.com/vroland/epdiy/blob/c61e9e923ce2418150d54f88cea5d196cdc40c54/src/epd_internals.h
 
 #pragma once
+#include <Utf8.h>
+
 #include <cstdint>
 
 /// Font metrics use "fixed-point 4" (4 fractional bits, i.e. 1/16-pixel
@@ -50,16 +52,55 @@ constexpr int centerOverRotated90CW(int baseCursorPos, int baseLeft, int baseWid
 }
 
 /// For combining marks that sit entirely above the baseline, compute how many
-/// pixels to raise the mark so there is at least MIN_GAP_PX between its bottom
-/// edge and the top of the base glyph.  Returns 0 for marks that extend to or
-/// below the baseline (e.g. cedilla, dot-below, ogonek).
-constexpr int raiseAboveBase(int markTop, int markHeight, int baseTop) {
+/// pixels to raise the mark so there is at least MIN_GAP_PX * level between its
+/// bottom edge and the top of the base glyph.  Returns 0 for marks that extend
+/// to or below the baseline (e.g. cedilla, dot-below, ogonek).
+/// `level` defaults to 1 for backward compatibility with existing Hebrew/Latin
+/// marks; Thai above-marks pass their level (1-4) for proper stacking height.
+constexpr int raiseAboveBase(int markTop, int markHeight, int baseTop, int level = 1) {
   if (markTop - markHeight <= 0) return 0;
   const int gap = markTop - markHeight - baseTop;
-  return (gap < MIN_GAP_PX) ? (MIN_GAP_PX - gap) : 0;
+  const int minGap = MIN_GAP_PX * level;
+  return (gap < minGap) ? (minGap - gap) : 0;
+}
+
+/// Mirror of raiseAboveBase for marks that sit below the baseline (Thai below-vowels).
+/// Computes how many pixels to lower the mark so there is at least
+/// MIN_GAP_PX * level between the mark's top edge and the base glyph's bottom edge.
+/// `baseBottom` is the base glyph's bottom edge (baseTop - baseHeight, negative for descenders).
+/// `markTop` is the mark glyph's top (typically near 0 for below-base marks).
+/// `level` is 1 for BELOW1, 2 for BELOW2.
+constexpr int lowerBelowBase(int markTop, int baseBottom, int level = 1) {
+  const int gap = markTop - baseBottom;
+  const int minGap = MIN_GAP_PX * level;
+  return (gap < minGap) ? (minGap - gap) : 0;
+}
+
+/// Horizontal shift for Thai above-marks on ascender consonants.
+/// Ascenders (ป ฝ ฟ ฬ) have a tall left stem; shift the mark LEFT so it
+/// doesn't overlap the stem.  Returns 0 for non-ascender bases.
+/// Aligned with libthai thrend.c: ascender consonants use shiftleft glyph variant.
+constexpr int thaiAboveMarkShiftX(const uint32_t baseCp, const int markWidth) {
+  if (thaiConsonantClass(baseCp) == ThaiConsonantClass::Ascender) {
+    return -(markWidth / 4);  // shift LEFT by ~25% of mark width
+  }
+  return 0;
 }
 
 }  // namespace combiningMark
+
+/// Compute the X position for a combining mark. For Thai marks, returns the
+/// post-base pen position (cursor after the base glyph's advance), because Thai
+/// fonts encode upper marks with zero advance and a negative left bearing,
+/// expecting placement from that position. For non-Thai marks, centers the mark
+/// over the base glyph's advance midpoint.
+inline int getCombiningAnchorX(const int32_t cursorXFP, const int lastBaseX, const int lastBaseAdvanceFP,
+                               const uint32_t cp) {
+  if (utf8IsThaiCombiningMark(cp)) {
+    return fp4::toPixel(cursorXFP);
+  }
+  return lastBaseX + fp4::toPixel(lastBaseAdvanceFP / 2);
+}
 
 /// Fixed-point conventions used by EpdGlyph and EpdFontData:
 ///   advanceX:   12.4 unsigned fixed-point in uint16_t  (use fp4::toPixel)

@@ -36,6 +36,16 @@ std::string utf8ComposeNfc(const std::string& in) {
       break;
     }
   }
+  // Thai Sara Am (U+0E33) = UTF-8 0xE0 0xB8 0xB3 — must decompose for mark stacking.
+  if (!maybeHasMarks) {
+    for (size_t i = 0; i + 2 < in.size(); ++i) {
+      if (static_cast<unsigned char>(in[i]) == 0xE0 && static_cast<unsigned char>(in[i + 1]) == 0xB8 &&
+          static_cast<unsigned char>(in[i + 2]) == 0xB3) {
+        maybeHasMarks = true;
+        break;
+      }
+    }
+  }
   if (!maybeHasMarks) return in;
 
   std::string out;
@@ -46,6 +56,45 @@ std::string utf8ComposeNfc(const std::string& in) {
   while (*p) {
     const uint32_t cp = utf8NextCodepoint(&p);
     if (cp == 0) break;
+    // Thai Sara Am (U+0E33) decomposition: U+0E33 → U+0E4D (Nikhahit) + U+0E32 (Sara Aa).
+    // If tone marks (U+0E48-0E4B) precede, Nikhahit moves before them:
+    //   <C, tone, 0E33> → <C, 0E4D, tone, 0E32>
+    // This matches HarfBuzz's Thai shaper behavior.
+    if (cp == 0x0E33) {
+      if (haveBase) {
+        utf8AppendCodepoint(base, out);
+        haveBase = false;
+      }
+      // Collect trailing tone marks from the output for reordering.
+      std::string tones;
+      while (!out.empty()) {
+        // Find the start of the last UTF-8 codepoint in out.
+        size_t pos = out.size() - 1;
+        while (pos > 0 && (static_cast<unsigned char>(out[pos]) & 0xC0) == 0x80) {
+          --pos;
+        }
+        // Decode the last codepoint.
+        const unsigned char* cpPtr = reinterpret_cast<const unsigned char*>(out.c_str() + pos);
+        const unsigned char* cpCopy = cpPtr;
+        const uint32_t lastCp = utf8NextCodepoint(&cpCopy);
+        if (lastCp >= 0x0E48 && lastCp <= 0x0E4B) {
+          // Tone mark — remove from out and prepend to tones (preserve order).
+          std::string toneStr;
+          utf8AppendCodepoint(lastCp, toneStr);
+          tones = toneStr + tones;
+          out.resize(pos);
+        } else {
+          break;
+        }
+      }
+      // Emit: Nikhahit, then reordered tone marks, then Sara Aa.
+      utf8AppendCodepoint(0x0E4D, out);  // Nikhahit (combining mark, above)
+      out += tones;                      // Re-emit tone marks after Nikhahit
+      utf8AppendCodepoint(0x0E32, out);  // Sara Aa (base vowel, advances cursor)
+      base = 0;
+      haveBase = false;
+      continue;
+    }
     if (utf8IsCombiningMark(cp)) {
       const uint32_t composed = haveBase ? utf8ComposePair(base, cp) : 0;
       if (composed) {
