@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "hyphenation/Hyphenator.h"
+#include "thai/ThaiSegmenter.h"
 
 constexpr int MAX_COST = std::numeric_limits<int>::max();
 
@@ -284,6 +285,36 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
       hasCjkBreakOpportunityBetween(lastCodepoint(words.back()), firstCodepoint(word))) {
     effectiveAttachToPrevious = false;
     effectiveNoSpaceBefore = true;
+  }
+
+  // Thai word segmentation: split at word boundaries (forward maximal matching
+  // against a flash-resident dictionary) instead of at every character. Words
+  // without Thai codepoints fall through to the CJK character-break path below.
+  if (containsThaiCodepoint(word)) {
+    auto breakOffsets = thaiWordBreakByteOffsets(word);
+    if (!breakOffsets.empty()) {
+      bool firstToken = true;
+      size_t tokenStart = 0;
+      for (const size_t breakOffset : breakOffsets) {
+        if (breakOffset <= tokenStart || breakOffset > word.size()) continue;
+        pushToken(word.substr(tokenStart, breakOffset - tokenStart), firstToken ? effectiveAttachToPrevious : false,
+                  firstToken ? effectiveNoSpaceBefore : true, false);
+        firstToken = false;
+        tokenStart = breakOffset;
+      }
+      if (tokenStart < word.size()) {
+        pushToken(word.substr(tokenStart), firstToken ? effectiveAttachToPrevious : false,
+                  firstToken ? effectiveNoSpaceBefore : true, false);
+      }
+    } else {
+      // Single Thai word with no internal break opportunities — keep as one
+      // token so the CJK path below does not split it at every character.
+      pushToken(std::move(word), effectiveAttachToPrevious, effectiveNoSpaceBefore, false);
+    }
+    if (wordStartsRtl) {
+      hasRtlWord = true;
+    }
+    return;
   }
 
   if (auto breakOffsets = cjkCharacterBreakByteOffsets(word); !breakOffsets.empty()) {

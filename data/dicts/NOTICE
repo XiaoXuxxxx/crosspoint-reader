@@ -1,0 +1,13 @@
+Thai Word Dictionary Notice
+===========================
+
+The Thai word dictionary bundled with this firmware (words_th.txt, ~62,000
+words) is sourced from the PyThaiNLP project and is released under CC0-1.0
+(Creative Commons Zero 1.0 Universal Public Domain Dedication).
+
+Source: https://github.com/PyThaiNLP/pythainlp
+File:   pythainlp/corpus/words_th.txt
+License: CC0-1.0
+  https://github.com/PyThaiNLP/pythainlp/blob/main/pythainlp/corpus/corpus_license.md
+
+Credit: PyThaiNLP project (https://pythainlp.github.io/)
