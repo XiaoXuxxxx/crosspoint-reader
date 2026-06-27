@@ -41,17 +41,25 @@ for size in ${UI_FONT_SIZES[@]}; do
     # are filled from it while every glyph Ubuntu already has stays unchanged
     # (fontstack is ordered by descending priority).
     viet_path="../builtinFonts/source/Ubuntu/Ubuntu-Vietnamese-${style}.ttf"
+    # Ubuntu lacks the Thai block (U+0E00-U+0E7F). Append NotoSansThai so Thai
+    # glyphs are filled from it; the --additional-intervals below exports the
+    # Thai code point range (converter self-trims unassigned/missing glyphs).
+    thai_path="../builtinFonts/source/NotoSansThai/NotoSansThai-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $hebrew_path $viet_path \
-      --additional-intervals 0x05D0,0x05EA > $output_path
+    python fontconvert.py $font_name $size $font_path $hebrew_path $viet_path $thai_path \
+      --additional-intervals 0x05D0,0x05EA --additional-intervals 0x0E00,0x0E7F > $output_path
     echo "Generated $output_path"
   done
 done
 
+# notosans_8 is the UI "small" font (SMALL_FONT_ID) used for button hints and
+# subtitles. Append NotoSansThai + the Thai interval so those labels render Thai
+# instead of tofu (NotoSans lacks the Thai block U+0E00-U+0E7F).
 python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSans/NotoSans-Regular.ttf \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
-  --additional-intervals 0x05D0,0x05EA > ../builtinFonts/notosans_8_regular.h
+  ../builtinFonts/source/NotoSansThai/NotoSansThai-Regular.ttf \
+  --additional-intervals 0x05D0,0x05EA --additional-intervals 0x0E00,0x0E7F > ../builtinFonts/notosans_8_regular.h
 
 echo ""
 echo "Running compression verification..."
