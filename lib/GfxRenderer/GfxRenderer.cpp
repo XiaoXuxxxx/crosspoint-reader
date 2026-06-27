@@ -20,6 +20,18 @@ namespace {
 uint8_t resolveSdCardStyle(const SdCardFont& font, const EpdFontFamily::Style style) {
   return font.resolveStyle(static_cast<uint8_t>(style));
 }
+
+/// Compute the X position for a combining mark.  Thai marks use pen-position
+/// (post-base) bearing; non-Thai marks center over the base glyph's advance midpoint.
+/// Must live here (not in EpdFontData.h) to avoid a cross-header dependency on Utf8.h.
+int getCombiningAnchorX(const int32_t cursorXFP, const int lastBaseX, const int32_t lastBaseAdvanceFP,
+                        const uint32_t cp) {
+  if (utf8IsThaiCombiningMark(cp)) {
+    return fp4::toPixel(cursorXFP);
+  }
+  return lastBaseX + fp4::toPixel(lastBaseAdvanceFP / 2);
+}
+
 }  // namespace
 
 namespace {
@@ -400,7 +412,16 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
   int lastBaseLeft = 0;
   int lastBaseWidth = 0;
   int lastBaseTop = 0;
-  int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
+  int lastBaseHeight = 0;   // base glyph height (for computing bottom edge for below-marks)
+  int lastMarkTop = 0;      // top of last drawn above-mark (for mark-to-mark stacking)
+  uint32_t lastBaseCp = 0;  // last base codepoint (for consonant-class-aware shifting)
+  // Thai cell-slot occupancy (libthai thcell.c model): tracks which slots are filled
+  // for the current base consonant, enabling composibility checks and level-3 routing.
+  // All three are reset whenever a new base consonant is drawn (see base glyph block).
+  bool hiloOccupied = false;   // above-vowel or level-3-as-hilo drawn
+  bool topOccupied = false;    // tone mark or level-3-as-top drawn
+  bool belowOccupied = false;  // below-vowel drawn
+  int32_t prevAdvanceFP = 0;   // 12.4 fixed-point: prev glyph's advance + next kern for snap
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     fontCacheManager_->recordText(renderedText, fontId, style);
@@ -426,11 +447,74 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
+      // BUG-3 fix: missing glyph → zero-advance no-op; keep slot trackers consistent.
       if (!combiningGlyph) continue;
-      const int raiseBy = combiningMark::raiseAboveBase(combiningGlyph->top, combiningGlyph->height, lastBaseTop);
-      const int combiningX = combiningMark::centerOver(lastBaseX, lastBaseLeft, lastBaseWidth, combiningGlyph->left,
-                                                       combiningGlyph->width);
-      renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos - raiseBy, black, style);
+
+      const ThaiMarkLevel level = thaiMarkLevel(cp);
+
+      if (level == ThaiMarkLevel::Below1 || level == ThaiMarkLevel::Below2) {
+        // Below-base mark (Thai below-vowels: U+0E38-0E3A)
+        // Composibility (WTT): reject if no base or below-vowel already present.
+        if (lastBaseCp == 0 || belowOccupied) continue;
+        belowOccupied = true;
+        const int baseBottom = lastBaseTop - lastBaseHeight;
+        const int levelIdx = static_cast<int>(level) - static_cast<int>(ThaiMarkLevel::Below1) + 1;
+        int lowerBy = combiningMark::lowerBelowBase(combiningGlyph->top, baseBottom, levelIdx);
+        // Extra lowering for descender (ฎ ฏ) and undersplit (ญ ฐ) consonants.
+        // Undersplit gets more aggressive lowering (tail-cut approximation per libthai
+        // thrend.c:98-100 — the split tail is longer than a descender stem).
+        const ThaiConsonantClass cc = thaiConsonantClass(lastBaseCp);
+        if (cc == ThaiConsonantClass::Descender) {
+          lowerBy += combiningGlyph->height / 2;
+        } else if (cc == ThaiConsonantClass::Undersplit) {
+          lowerBy += combiningGlyph->height;
+        }
+        const int combiningX =
+            getCombiningAnchorX(fp4::fromPixel(lastBaseX) + prevAdvanceFP, lastBaseX, prevAdvanceFP, cp);
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos + lowerBy, black, style);
+      } else if (level != ThaiMarkLevel::None) {
+        // Above-base Thai mark (above-vowels/tones: U+0E31, 0E34-0E37, 0E47-0E4E)
+        // Composibility: reject Thai mark if no valid base.
+        if (lastBaseCp == 0) continue;
+
+        // Level 3 hilo-or-top routing (libthai thcell.c:63-109):
+        // ็ (U+0E47 Maitaikhu) and ำ-decomposed ำ (U+0E4D Nikhahit) go to hilo
+        // if empty, else top. This correctly positions them close to base when
+        // no above-vowel is present, and stacks them on the vowel when one is.
+        if (level == ThaiMarkLevel::Above2) {
+          if (!hiloOccupied) {
+            hiloOccupied = true;  // → hilo slot (close to base)
+          } else {
+            topOccupied = true;  // → top slot (stack on hilo)
+          }
+        } else if (level == ThaiMarkLevel::Above1) {
+          // Above-vowel — reject if hilo already occupied (AV1+AV2 = reject per WTT).
+          if (hiloOccupied) continue;
+          hiloOccupied = true;
+        } else if (level == ThaiMarkLevel::Above3) {
+          // Tone mark / thanthakhat — reject if top already occupied (consecutive tones).
+          if (topOccupied) continue;
+          topOccupied = true;
+        }
+
+        // Vertical tiering: stackBase = lastMarkTop when a prior above-mark was drawn
+        // (mark-to-mark stacking), else lastBaseTop (first mark above base).
+        const int stackBase = (lastMarkTop != 0) ? lastMarkTop : lastBaseTop;
+        const int raiseBy = combiningMark::raiseAboveBase(combiningGlyph->top, combiningGlyph->height, stackBase, 1);
+        // Horizontal shift for ascender consonants (shifts LEFT per libthai).
+        const int shiftX = combiningMark::thaiAboveMarkShiftX(lastBaseCp, combiningGlyph->width);
+        const int combiningX =
+            getCombiningAnchorX(fp4::fromPixel(lastBaseX) + prevAdvanceFP, lastBaseX, prevAdvanceFP, cp) + shiftX;
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos - raiseBy, black, style);
+        // Track this mark's top for potential mark-to-mark stacking.
+        lastMarkTop = combiningGlyph->top - raiseBy;
+      } else {
+        // Non-Thai combining mark (Latin diacritics, Hebrew vowels, etc.): center over base.
+        const int raiseBy = combiningMark::raiseAboveBase(combiningGlyph->top, combiningGlyph->height, lastBaseTop);
+        const int combiningX = combiningMark::centerOver(lastBaseX, lastBaseLeft, lastBaseWidth, combiningGlyph->left,
+                                                         combiningGlyph->width);
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos - raiseBy, black, style);
+      }
       continue;
     }
 
@@ -449,6 +533,15 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     lastBaseLeft = glyph ? glyph->left : 0;
     lastBaseWidth = glyph ? glyph->width : 0;
     lastBaseTop = glyph ? glyph->top : 0;
+    lastBaseHeight = glyph ? glyph->height : 0;
+    lastBaseCp = cp;
+    // Reset Thai cell-slot occupancy and mark-stacking state for the new base consonant.
+    // BUG-2/BUG-5 fix: reset per-base (not per-drawText), so consecutive base+marks in
+    // the same drawText call each get a clean slate without leaking across tokens.
+    lastMarkTop = 0;
+    hiloOccupied = false;
+    topOccupied = false;
+    belowOccupied = false;
     prevAdvanceFP = glyph ? glyph->advanceX : 0;  // 12.4 fixed-point
 
     const bool isSupSub = (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0;

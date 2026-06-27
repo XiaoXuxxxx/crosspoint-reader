@@ -92,6 +92,27 @@ if (parsedSize != fileSize) {
 
 ### Version 29
 
+Bumped from version 25 → 29 across prior releases. Version 29 adds:
+
+- TextBlock word data stored as one flat arena (offset table + NUL-terminated
+  text blob) instead of length-prefixed strings and per-field arrays.
+- Lazy incremental EPUB section indexing.
+
+Old caches (versions 25–28) are automatically invalidated and rebuilt.
+
+### Version 30
+
+Bumped from version 29. Version 30 adds:
+
+- Thai dictionary word-break segmentation (`ThaiSegmenter`): Thai text is split
+  into dictionary words instead of falling back to CJK per-character breaks.
+- Thai Sara Am (U+0E33) decomposition at layout time: `utf8DecomposeThaiSaraAm`
+  runs in `ParsedText::addWord` so that both the segmenter dict lookup and the
+  renderer see the decomposed form (Nikhahit U+0E4D + Sara Aa U+0E32), matching
+  the generator's `decompose_sara_am()` rule exactly.
+
+Caches from versions 25–29 are automatically invalidated and rebuilt.
+
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
