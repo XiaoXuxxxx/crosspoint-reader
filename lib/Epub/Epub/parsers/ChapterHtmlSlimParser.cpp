@@ -958,6 +958,31 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   self->depth += 1;
 }
 
+// Find the byte offset where the last combining cluster in buf[0..len) begins.
+// A cluster is a base codepoint + any trailing combining marks (Thai vowels/tone
+// marks, Latin diacritics, etc.). Walks backward over combining marks to locate
+// the base. Returns 0 if the buffer is empty or contains only combining marks.
+// Used by the MAX_WORD_SIZE overflow path to keep a base + its marks together
+// when flushing, so a combining mark is never orphaned at the start of a chunk.
+static int lastClusterStart(const char* buf, int len) {
+  if (len <= 0) return 0;
+  int pos = len;
+  while (pos > 0) {
+    // Walk back to the lead byte of the codepoint ending at pos.
+    int start = pos - 1;
+    while (start > 0 && (static_cast<uint8_t>(buf[start]) & 0xC0) == 0x80) {
+      --start;
+    }
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(buf + start);
+    const uint32_t cp = utf8NextCodepoint(&p);
+    if (!utf8IsCombiningMark(cp)) {
+      return start;  // Base char found — cluster starts here.
+    }
+    pos = start;  // Combining mark, keep walking back.
+  }
+  return 0;  // All combining marks (malformed input).
+}
+
 void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
 
@@ -1080,17 +1105,34 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     }
 
     // If we're about to run out of space, then cut the word off and start a new one.
-    // For CJK text (no spaces), this is the primary word-breaking mechanism.
+    // For CJK/Thai text (no inter-word spaces), this is the primary word-breaking mechanism.
     // We must avoid splitting multi-byte UTF-8 sequences across word boundaries,
     // otherwise the trailing bytes become orphaned continuation bytes that the
     // decoder can't interpret.
     if (self->partWordBufferIndex >= MAX_WORD_SIZE) {
       int safeLen = utf8SafeTruncateBuffer(self->partWordBuffer, self->partWordBufferIndex);
 
+      // Always pull back the last combining cluster (base + trailing marks) so
+      // that a combining mark is never orphaned at the start of the next chunk.
+      // The renderer silently drops leading combining marks (GfxRenderer.cpp,
+      // lastBaseCp == 0 → continue), which is how Thai sara i (U+0E34) was lost:
+      // the 200-byte split landed between a base consonant and its vowel mark,
+      // and the mark ended up at the start of the next chunk with no base to
+      // attach to. This also handles the incomplete-UTF-8-tail case, where the
+      // mark's first 1-2 bytes are at the end of the buffer and the rest is in
+      // s[i] — utf8SafeTruncateBuffer moves the incomplete bytes to the overflow,
+      // and lastClusterStart pulls the base back to join them. For scripts
+      // without combining marks (CJK), this just moves the last char to the
+      // next chunk, which is harmless.
+      if (safeLen > 0) {
+        safeLen = lastClusterStart(self->partWordBuffer, safeLen);
+      }
+
       if (safeLen < self->partWordBufferIndex && safeLen > 0) {
-        // Incomplete UTF-8 sequence at the end — save it before flushing
+        // Save the overflow (incomplete UTF-8 tail and/or a pulled-back cluster)
+        // before flushing, then restore it as the start of the next chunk.
         int overflow = self->partWordBufferIndex - safeLen;
-        char saved[4];
+        char saved[32];
         for (int j = 0; j < overflow; j++) {
           saved[j] = self->partWordBuffer[safeLen + j];
         }
@@ -1103,6 +1145,16 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
       } else {
         self->flushPartWordBuffer();
       }
+
+      // The 200-byte buffer overflow is a mechanical limit, NOT a word boundary.
+      // The continuation chunk must attach to the previous one so the layout engine
+      // doesn't insert inter-word spacing (a visible gap) between the two halves of
+      // what is really a single text run. This matters most for space-less scripts
+      // (Thai, CJK) where long runs routinely exceed MAX_WORD_SIZE. addWord() will
+      // still apply CJK/Thai break-opportunity rules to decide whether a break is
+      // legal between the chunks; this flag only prevents a full space from being
+      // inserted at the join.
+      self->nextWordContinues = true;
     }
 
     self->partWordBuffer[self->partWordBufferIndex++] = s[i];
