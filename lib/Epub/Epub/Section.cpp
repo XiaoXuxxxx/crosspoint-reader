@@ -16,7 +16,9 @@ namespace {
 // text blob) instead of length-prefixed strings and per-field arrays.
 // v30: Arabic shaping changed both drawing and measurement (getTextAdvanceX now
 //      measures the shaped visual text); cached word positions from v29 no longer
-//      match what drawText renders.
+//      match what drawText renders. Also: Flat-arena TextBlock word storage,
+//      Thai dict word-break segmentation, Sara Am decomposition, and lazy
+//      incremental indexing.
 constexpr uint8_t SECTION_FILE_VERSION = 30;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
