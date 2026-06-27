@@ -11,8 +11,8 @@
 #include "parsers/ChapterHtmlSlimParser.h"
 
 namespace {
-// v28: text decoration bits now include line-through in serialized wordStyles.
-constexpr uint8_t SECTION_FILE_VERSION = 28;
+// v29: Thai dict word-break segmentation + Sara Am decomposition + lazy incremental indexing.
+constexpr uint8_t SECTION_FILE_VERSION = 29;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

@@ -90,13 +90,24 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 28
+### Version 29
+
+Bumped from version 25 → 29 across prior releases. Version 29 adds:
+
+- Thai dictionary word-break segmentation (`ThaiSegmenter`): Thai text is split
+  into dictionary words instead of falling back to CJK per-character breaks.
+- Thai Sara Am (U+0E33) decomposition at layout time: `utf8DecomposeThaiSaraAm`
+  runs in `ParsedText::addWord` so that both the segmenter dict lookup and the
+  renderer see the decomposed form (Nikhahit U+0E4D + Sara Aa U+0E32), matching
+  the generator's `decompose_sara_am()` rule exactly.
+
+Old caches (versions 25–28) are automatically invalidated and rebuilt.
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
 
-Version 28 includes:
+Version 29 includes:
 
 - cache-busting fields for paragraph alignment, hyphenation, embedded CSS,
   image rendering mode, and Focus Reading
@@ -115,7 +126,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 28
+#define EXPECTED_VERSION 29
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
