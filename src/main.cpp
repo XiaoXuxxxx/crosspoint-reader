@@ -92,23 +92,7 @@ EpdFont notosans18BoldFont(&notosans_18_bold);
 EpdFont notosans18ItalicFont(&notosans_18_italic);
 EpdFont notosans18BoldItalicFont(&notosans_18_bolditalic);
 EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, &notosans18ItalicFont,
-                                   &notosans18BoldItalicFont);
-
-EpdFont notosansthai10RegularFont(&notosansthai_10_regular);
-EpdFont notosansthai10BoldFont(&notosansthai_10_bold);
-EpdFontFamily notosansthai10FontFamily(&notosansthai10RegularFont, &notosansthai10BoldFont);
-
-EpdFont notosansthai12RegularFont(&notosansthai_12_regular);
-EpdFont notosansthai12BoldFont(&notosansthai_12_bold);
-EpdFontFamily notosansthai12FontFamily(&notosansthai12RegularFont, &notosansthai12BoldFont);
-
-EpdFont notosansthai16RegularFont(&notosansthai_16_regular);
-EpdFont notosansthai16BoldFont(&notosansthai_16_bold);
-EpdFontFamily notosansthai16FontFamily(&notosansthai16RegularFont, &notosansthai16BoldFont);
-
-EpdFont notoserifthai16RegularFont(&notoserifthai_16_regular);
-EpdFont notoserifthai16BoldFont(&notoserifthai_16_bold);
-EpdFontFamily notoserifthai16FontFamily(&notoserifthai16RegularFont, &notoserifthai16BoldFont);
+                                    &notosans18BoldItalicFont);
 
 #endif  // OMIT_FONTS
 
@@ -307,16 +291,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTOSANS_14_FONT_ID, notosans14FontFamily);
   renderer.insertFont(NOTOSANS_16_FONT_ID, notosans16FontFamily);
   renderer.insertFont(NOTOSANS_18_FONT_ID, notosans18FontFamily);
-
-  renderer.insertFont(NOTOSANSTHAI_10_FONT_ID, notosansthai10FontFamily);
-  renderer.insertFont(NOTOSANSTHAI_12_FONT_ID, notosansthai12FontFamily);
-  renderer.insertFont(NOTOSANSTHAI_16_FONT_ID, notosansthai16FontFamily);
-  renderer.insertFont(NOTOSERIFTHAI_16_FONT_ID, notoserifthai16FontFamily);
-  {
-    const int thaiFallbackIds[] = {NOTOSANSTHAI_10_FONT_ID, NOTOSANSTHAI_12_FONT_ID, NOTOSANSTHAI_16_FONT_ID,
-                                   NOTOSERIFTHAI_16_FONT_ID};
-    renderer.setThaiFallbackFonts(thaiFallbackIds, 4);
-  }
 #endif  // OMIT_FONTS
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);

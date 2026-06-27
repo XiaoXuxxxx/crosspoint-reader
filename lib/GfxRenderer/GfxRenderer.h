@@ -57,14 +57,6 @@ class GfxRenderer {
   // fontCacheManager_ below.
   mutable std::map<int, SdCardFont*> sdCardFonts_;
 
-  // Thai per-codepoint font fallback IDs. When the primary font lacks a Thai
-  // glyph (U+0E00-0E7F), the renderer falls back to the builtin Thai font
-  // whose ascender is closest to the primary font's, so UI text (10/12pt)
-  // and reading text (16pt) each get a size-matched Thai fallback.
-  static constexpr size_t MAX_THAI_FALLBACKS = 8;
-  int thaiFallbackIds_[MAX_THAI_FALLBACKS] = {};
-  size_t thaiFallbackCount_ = 0;
-
   // Mutable because drawText() is const but needs to delegate scan-mode
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
   // as before, concentrated in a single pointer instead of four fields.
@@ -85,7 +77,6 @@ class GfxRenderer {
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
   void freeBwBufferChunks();
-  const EpdFontFamily* getThaiFallbackFont(uint32_t cp, EpdFontFamily::Style style, int primaryFontId) const;
   template <Color color>
   void drawPixelDither(int x, int y) const;
   template <Color color>
@@ -110,10 +101,6 @@ class GfxRenderer {
   // Setup
   void begin();  // must be called right after display.begin()
   void insertFont(int fontId, EpdFontFamily font);
-  void setThaiFallbackFonts(const int* fontIds, size_t count) {
-    thaiFallbackCount_ = (count < MAX_THAI_FALLBACKS) ? count : MAX_THAI_FALLBACKS;
-    for (size_t i = 0; i < thaiFallbackCount_; i++) thaiFallbackIds_[i] = fontIds[i];
-  }
   // Clears both the flash-font map and any SD-font registration for fontId.
   // Coupled to avoid dangling SdCardFont* in sdCardFonts_ when callers free
   // the underlying SdCardFont and forget the SD-side unregister.

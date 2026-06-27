@@ -374,14 +374,6 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, baseDir);
 
-  // When Thai fallback is active, use getTextAdvanceX which handles per-codepoint
-  // fallback to the size-matched Thai font. getTextDimensions (bounding box) only
-  // measures the primary font, so Thai codepoints measure as REPLACEMENT_GLYPH
-  // width (tiny/zero), breaking truncation and centering for Thai text.
-  if (thaiFallbackCount_ > 0) {
-    return getTextAdvanceX(fontId, renderedText, style);
-  }
-
   int w = 0, h = 0;
   fontIt->second.getTextDimensions(renderedText, &w, &h, style);
   return w;
@@ -391,33 +383,6 @@ void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* te
                                    const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir) const {
   const int x = (getScreenWidth() - getTextWidth(fontId, text, style, baseDir)) / 2;
   drawText(fontId, x, y, text, black, style, baseDir);
-}
-
-const EpdFontFamily* GfxRenderer::getThaiFallbackFont(const uint32_t cp, const EpdFontFamily::Style style,
-                                                      const int primaryFontId) const {
-  if (thaiFallbackCount_ == 0) return nullptr;
-  // Pick the Thai fallback whose ascender is closest to the primary font's,
-  // so UI text (10/12pt) and reading text (16pt) each get a size-matched font.
-  const int primaryAscender = getFontAscenderSize(primaryFontId);
-  size_t bestIdx = 0;
-  int bestDiff = 0x7FFFFFFF;
-  for (size_t i = 0; i < thaiFallbackCount_; i++) {
-    const int asc = getFontAscenderSize(thaiFallbackIds_[i]);
-    const int diff = (asc > primaryAscender) ? (asc - primaryAscender) : (primaryAscender - asc);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestIdx = i;
-    }
-  }
-  const auto it = fontMap.find(thaiFallbackIds_[bestIdx]);
-  if (it != fontMap.end() && it->second.getGlyph(cp, style)) return &it->second;
-  // Fallback: try all others in case the closest match lacks this glyph.
-  for (size_t i = 0; i < thaiFallbackCount_; i++) {
-    if (i == bestIdx) continue;
-    const auto it2 = fontMap.find(thaiFallbackIds_[i]);
-    if (it2 != fontMap.end() && it2->second.getGlyph(cp, style)) return &it2->second;
-  }
-  return nullptr;
 }
 
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
@@ -456,15 +421,19 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     return;
   }
   const auto& font = fontIt->second;
-  const bool hasThaiFallback = (thaiFallbackCount_ > 0);
-  // Cache the replacement glyph pointer so we can detect when getGlyph() returned
-  // REPLACEMENT_GLYPH (a non-null "?" shape) instead of nullptr for a missing codepoint.
-  // Fonts that include U+FFFD in their intervals (all reading fonts) never return nullptr.
-  const EpdGlyph* replacementGlyph = hasThaiFallback ? font.getGlyph(REPLACEMENT_GLYPH, style) : nullptr;
 
   const char* textCursor = renderedText;
   uint32_t cp;
   uint32_t prevCp = 0;
+  bool thaiDebug = false;
+  // Check if text contains Thai codepoints (U+0E00-0E7F = UTF-8 0xE0 0xB8 xx)
+  for (const unsigned char* p = reinterpret_cast<const unsigned char*>(renderedText); *p; ++p) {
+    if (p[0] == 0xE0 && p[1] == 0xB8) {
+      thaiDebug = true;
+      LOG_DBG("THAI", "=== drawText: \"%s\" at x=%d ===", renderedText, x);
+      break;
+    }
+  }
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor)))) {
     // Skip Hebrew Niqqud (vowel marks)
     // Temporary: avoid adding Niqqud to built-in fonts. Remove when custom fonts are supported.
@@ -472,18 +441,28 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       continue;
     }
 
+    // DEBUG: log every Thai codepoint with cursor position to find gap source
+    if (cp >= 0x0E00 && cp <= 0x0E7F) {
+      thaiDebug = true;
+      LOG_DBG("THAI", "cp=0x%04X cursorX=%d isMark=%d", cp, lastBaseX,
+              utf8IsCombiningMark(cp) ? 1 : 0);
+    } else if (thaiDebug && cp < 0x0E00) {
+      thaiDebug = false;
+      LOG_DBG("THAI", "--- non-Thai cp=0x%04X cursorX=%d ---", cp, lastBaseX);
+    }
+
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
-      const EpdFontFamily* markFallbackFont = nullptr;
-      if (hasThaiFallback && cp >= 0x0E00 && cp <= 0x0E7F && (!combiningGlyph || combiningGlyph == replacementGlyph)) {
-        markFallbackFont = getThaiFallbackFont(cp, style, fontId);
-        if (markFallbackFont) {
-          combiningGlyph = markFallbackFont->getGlyph(cp, style);
-        }
+      if (!combiningGlyph) {
+        if (thaiDebug) LOG_DBG("THAI", "  mark 0x%04X: NO GLYPH (skipped)", cp);
+        continue;
       }
-      if (!combiningGlyph) continue;
-      const EpdFontFamily& markRenderFont = markFallbackFont ? *markFallbackFont : font;
       const ThaiMarkLevel level = thaiMarkLevel(cp);
+      if (thaiDebug) {
+        LOG_DBG("THAI", "  mark 0x%04X: adv=%d left=%d width=%d level=%d baseCp=0x%04X",
+                cp, combiningGlyph->advanceX, combiningGlyph->left, combiningGlyph->width,
+                static_cast<int>(level), lastBaseCp);
+      }
 
       if (level == ThaiMarkLevel::Below1 || level == ThaiMarkLevel::Below2) {
         // Below-base mark (Thai below-vowels: U+0E38-0E3A)
@@ -504,7 +483,7 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
         }
         const int combiningX = getCombiningAnchorX(fp4::fromPixel(lastBaseX) + prevAdvanceFP, lastBaseX,
                                                      prevAdvanceFP, cp);
-        renderCharImpl<TextRotation::None>(*this, renderMode, markRenderFont, cp, combiningX, yPos + lowerBy, black,
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos + lowerBy, black,
                                            style);
       } else {
         // Above-base mark (Thai above-vowels/tones, or non-Thai combining marks)
@@ -543,7 +522,7 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
         const int combiningX = getCombiningAnchorX(fp4::fromPixel(lastBaseX) + prevAdvanceFP, lastBaseX,
                                                      prevAdvanceFP, cp) +
                                shiftX;
-        renderCharImpl<TextRotation::None>(*this, renderMode, markRenderFont, cp, combiningX, yPos - raiseBy, black,
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos - raiseBy, black,
                                            style);
         // Track this mark's top for potential mark-to-mark stacking
         lastMarkTop = combiningGlyph->top - raiseBy;
@@ -558,16 +537,18 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     // where they fall on the line.
     if (prevCp != 0) {
       const auto kernFP = font.getKerning(prevCp, cp, style);  // 4.4 fixed-point kern
-      lastBaseX += fp4::toPixel(prevAdvanceFP + kernFP);       // snap 12.4 fixed-point to nearest pixel
+      const int stepPx = fp4::toPixel(prevAdvanceFP + kernFP);
+      lastBaseX += stepPx;       // snap 12.4 fixed-point to nearest pixel
+      if (thaiDebug) {
+        LOG_DBG("THAI", "  step: prevAdvFP=%d kernFP=%d → +%dpx → cursorX=%d",
+                prevAdvanceFP, kernFP, stepPx, lastBaseX);
+      }
     }
 
     const EpdGlyph* glyph = font.getGlyph(cp, style);
-    const EpdFontFamily* baseFallbackFont = nullptr;
-    if (hasThaiFallback && cp >= 0x0E00 && cp <= 0x0E7F && (!glyph || glyph == replacementGlyph)) {
-      baseFallbackFont = getThaiFallbackFont(cp, style, fontId);
-      if (baseFallbackFont) {
-        glyph = baseFallbackFont->getGlyph(cp, style);
-      }
+
+    if (thaiDebug && !glyph) {
+      LOG_DBG("THAI", "  base 0x%04X: NO GLYPH (adv=0, will overlap next)", cp);
     }
 
     lastBaseLeft = glyph ? glyph->left : 0;
@@ -581,6 +562,12 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     belowOccupied = false;
     prevAdvanceFP = glyph ? glyph->advanceX : 0;  // 12.4 fixed-point
 
+    if (thaiDebug) {
+      LOG_DBG("THAI", "  base 0x%04X: advFP=%d (%dpx) left=%d width=%d → cursorX=%d",
+              cp, prevAdvanceFP, fp4::toPixel(prevAdvanceFP),
+              glyph ? glyph->left : -1, glyph ? glyph->width : -1, lastBaseX);
+    }
+
     const bool isSupSub = (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0;
     if (isSupSub) {
       // Halve the advance so the cursor advances by the same amount the scaled glyph
@@ -588,12 +575,11 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       prevAdvanceFP = (prevAdvanceFP + 1) / 2;
     }
 
-    const EpdFontFamily& baseRenderFont = baseFallbackFont ? *baseFallbackFont : font;
     if (isSupSub) {
       // yPos already carries the vertical offset applied by TextBlock::render().
-      renderCharScaled(*this, renderMode, baseRenderFont, cp, lastBaseX, yPos, black, style);
+      renderCharScaled(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
     } else {
-      renderCharImpl<TextRotation::None>(*this, renderMode, baseRenderFont, cp, lastBaseX, yPos, black, style);
+      renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, lastBaseX, yPos, black, style);
     }
     prevCp = cp;
   }
@@ -1744,16 +1730,10 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
       return 0;
     }
     const auto& font = fontIt->second;
-    const bool hasThaiFallback = (thaiFallbackCount_ > 0);
-    const EpdGlyph* replacementGlyph = hasThaiFallback ? font.getGlyph(REPLACEMENT_GLYPH, style) : nullptr;
     while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
       int32_t advFP = sdIt->second->getAdvance(cp, styleIdx);
       if (advFP == 0 && !utf8IsCombiningMark(cp)) {
         const EpdGlyph* glyph = font.getGlyph(cp, style);
-        if (hasThaiFallback && cp >= 0x0E00 && cp <= 0x0E7F && (!glyph || glyph == replacementGlyph)) {
-          const EpdFontFamily* fallback = getThaiFallbackFont(cp, style, fontId);
-          if (fallback) glyph = fallback->getGlyph(cp, style);
-        }
         advFP = glyph ? glyph->advanceX : 0;
       }
       widthFP += isSupSub ? (advFP + 1) / 2 : advFP;
@@ -1772,8 +1752,6 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   int widthPx = 0;
   int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
   const auto& font = fontIt->second;
-  const bool hasThaiFallback = (thaiFallbackCount_ > 0);
-  const EpdGlyph* replacementGlyph = hasThaiFallback ? font.getGlyph(REPLACEMENT_GLYPH, style) : nullptr;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
     if (utf8IsCombiningMark(cp)) {
       continue;
@@ -1788,10 +1766,6 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
     }
 
     const EpdGlyph* glyph = font.getGlyph(cp, style);
-    if (hasThaiFallback && cp >= 0x0E00 && cp <= 0x0E7F && (!glyph || glyph == replacementGlyph)) {
-      const EpdFontFamily* fallback = getThaiFallbackFont(cp, style, fontId);
-      if (fallback) glyph = fallback->getGlyph(cp, style);
-    }
     prevAdvanceFP = glyph ? glyph->advanceX : 0;
     if ((style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
       prevAdvanceFP = (prevAdvanceFP + 1) / 2;
@@ -1845,8 +1819,6 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
   }
 
   const auto& font = fontIt->second;
-  const bool hasThaiFallback = (thaiFallbackCount_ > 0);
-  const EpdGlyph* replacementGlyph = hasThaiFallback ? font.getGlyph(REPLACEMENT_GLYPH, style) : nullptr;
 
   int lastBaseY = y;
   int lastBaseLeft = 0;
@@ -1872,15 +1844,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
-      const EpdFontFamily* markFallbackFont = nullptr;
-      if (hasThaiFallback && cp >= 0x0E00 && cp <= 0x0E7F && (!combiningGlyph || combiningGlyph == replacementGlyph)) {
-        markFallbackFont = getThaiFallbackFont(cp, style, fontId);
-        if (markFallbackFont) {
-          combiningGlyph = markFallbackFont->getGlyph(cp, style);
-        }
-      }
       if (!combiningGlyph) continue;
-      const EpdFontFamily& markRenderFont = markFallbackFont ? *markFallbackFont : font;
       const ThaiMarkLevel level = thaiMarkLevel(cp);
 
       if (level == ThaiMarkLevel::Below1 || level == ThaiMarkLevel::Below2) {
@@ -1901,8 +1865,8 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
         const int combiningX = x + lowerBy;  // +X = "below" in rotated coords
         const int combiningY = combiningMark::centerOverRotated90CW(lastBaseY, lastBaseLeft, lastBaseWidth,
                                                                     combiningGlyph->left, combiningGlyph->width);
-        renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, markRenderFont, cp, combiningX, combiningY, black,
-                                                  style);
+        renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, combiningX, combiningY, black,
+                                                   style);
       } else {
         // Above-base mark — in rotated coords, "above" means -X direction
         // Composibility: reject Thai mark if no valid base
@@ -1929,8 +1893,8 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
         const int combiningX = x - raiseBy;  // -X = "above" in rotated coords
         const int combiningY = combiningMark::centerOverRotated90CW(lastBaseY, lastBaseLeft, lastBaseWidth,
                                                                     combiningGlyph->left, combiningGlyph->width);
-        renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, markRenderFont, cp, combiningX, combiningY, black,
-                                                  style);
+        renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, combiningX, combiningY, black,
+                                                   style);
         lastMarkTop = combiningGlyph->top - raiseBy;
       }
       continue;
@@ -1946,13 +1910,6 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     }
 
     const EpdGlyph* glyph = font.getGlyph(cp, style);
-    const EpdFontFamily* baseFallbackFont = nullptr;
-    if (hasThaiFallback && cp >= 0x0E00 && cp <= 0x0E7F && (!glyph || glyph == replacementGlyph)) {
-      baseFallbackFont = getThaiFallbackFont(cp, style, fontId);
-      if (baseFallbackFont) {
-        glyph = baseFallbackFont->getGlyph(cp, style);
-      }
-    }
 
     lastBaseLeft = glyph ? glyph->left : 0;
     lastBaseWidth = glyph ? glyph->width : 0;
@@ -1964,8 +1921,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     topOccupied = false;
     belowOccupied = false;
 
-    const EpdFontFamily& baseRenderFont = baseFallbackFont ? *baseFallbackFont : font;
-    renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, baseRenderFont, cp, x, lastBaseY, black, style);
+    renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, font, cp, x, lastBaseY, black, style);
     prevCp = cp;
   }
 }
