@@ -1,6 +1,8 @@
 add_executable(Utf8ComposeTest
   Utf8ComposeTest.cpp
+  ThaiSegmentationTest.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
+  ${REPO_ROOT}/lib/Epub/Epub/thai/ThaiSegmenter.cpp
 )
 
 target_include_directories(Utf8ComposeTest PRIVATE

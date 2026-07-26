@@ -90,7 +90,22 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 35
+### Version 37
+
+Bumped from version 36. Version 37 adds Thai lexicon word-break segmentation
+and Thai Sara Am (U+0E33) decomposition at layout time. Thai token offsets
+remain based on the original source codepoints, while the decomposed text is
+used for rendering and lexicon lookup.
+
+Caches from versions 25–36 are automatically invalidated and rebuilt.
+
+### Version 36
+
+Version 36 changes ruby/CJK line breaking: CJK word gaps are suppressed only
+for tokens glued in the source, and ruby element boundaries preserve the
+continuation flag. This invalidates cached page positions from version 35.
+
+Bumped from version 35.
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
@@ -99,11 +114,9 @@ current reader settings, the section is discarded and rebuilt.
 Version 35 adds a header offset and a `uint32_t` entry per page for the
 visible-text offset LUT. The other section LUTs remain unchanged.
 
-Version 34 is binary-identical to version 33. The version was bumped because
-word-gap suppression was narrowed to tokens glued together in the source: v33
-dropped the gap between any two words meeting at a CJK break opportunity, which
-collapsed the spaces between Hangul words, so v33 word positions no longer match
-what the layout engine now produces.
+Version 34 changes `<br>` handling: a `<br>` after text is a margin-stripped
+line break, while an empty `<br>` block injects the scene-break gap. This
+matches browser-like layout and invalidates cached page positions.
 
 Version 30 is binary-identical to version 29. The version was bumped because
 Arabic contextual shaping changed text measurement (`getTextAdvanceX` now
@@ -135,7 +148,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 35
+#define EXPECTED_VERSION 37
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
