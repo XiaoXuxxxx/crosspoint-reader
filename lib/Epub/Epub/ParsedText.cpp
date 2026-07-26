@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "hyphenation/Hyphenator.h"
+#include "thai/ThaiSegmenter.h"
 
 constexpr int MAX_COST = std::numeric_limits<int>::max();
 
@@ -262,6 +263,11 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   // precomposed glyph is used instead. This runs once per word at layout time (the
   // result is cached in the section file) and is a cheap no-op for mark-free text.
   word = utf8ComposeNfc(word);
+  // Decompose Thai Sara Am (U+0E33) → Nikhahit (U+0E4D) + Sara Aa (U+0E32) with
+  // tone-mark reordering.  Runs after utf8ComposeNfc (input is already NFC) so that
+  // both the Thai segmenter lexicon lookup and the renderer see the decomposed form.
+  // Fast-path: no-op for non-Thai text (checks for 0xE0 0xB8 0xB3 byte sequence).
+  word = utf8DecomposeThaiSaraAm(word);
 
   EpdFontFamily::Style baseStyle = fontStyle;
   if (underline) {
@@ -312,23 +318,39 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     }
   };
 
-  if (auto breakOffsets = cjkCharacterBreakByteOffsets(word); !breakOffsets.empty()) {
-    // CJK-heavy paragraphs can push hundreds of tiny tokens quickly when CSS toggles
-    // inline styles. Reserve once up front to avoid repeated vector growth reallocations.
+  // Splits `tokenWord` into multiple tokens at `breakOffsets` (ascending byte
+  // offsets strictly between 0 and tokenWord.size()), or pushes it whole as a
+  // single token when no breaks are given. Shared by the CJK and Thai
+  // word-break paths below: both can turn one "word" into many tiny tokens
+  // (CJK/Thai text has no inter-word spaces), so both need the up-front
+  // capacity reservation and the same first-token-attaches /
+  // later-tokens-no-space rule.
+  const auto pushBrokenWord = [&](std::string tokenWord, const std::vector<size_t>& breakOffsets) {
+    if (breakOffsets.empty()) {
+      pushToken(std::move(tokenWord), effectiveAttachToPrevious, effectiveNoSpaceBefore, false);
+      return;
+    }
+    // CJK/Thai-heavy paragraphs can push hundreds of tiny tokens quickly when CSS
+    // toggles inline styles. Reserve once up front to avoid repeated vector growth
+    // reallocations.
     ensureTokenCapacity(breakOffsets.size() + 1);
     bool firstToken = true;
     size_t tokenStart = 0;
     for (const size_t breakOffset : breakOffsets) {
-      if (breakOffset <= tokenStart || breakOffset > word.size()) continue;
-      pushToken(word.substr(tokenStart, breakOffset - tokenStart), firstToken ? effectiveAttachToPrevious : false,
+      if (breakOffset <= tokenStart || breakOffset > tokenWord.size()) continue;
+      pushToken(tokenWord.substr(tokenStart, breakOffset - tokenStart), firstToken ? effectiveAttachToPrevious : false,
                 firstToken ? effectiveNoSpaceBefore : true, false);
       firstToken = false;
       tokenStart = breakOffset;
     }
-    if (tokenStart < word.size()) {
-      pushToken(word.substr(tokenStart), firstToken ? effectiveAttachToPrevious : false,
+    if (tokenStart < tokenWord.size()) {
+      pushToken(tokenWord.substr(tokenStart), firstToken ? effectiveAttachToPrevious : false,
                 firstToken ? effectiveNoSpaceBefore : true, false);
     }
+  };
+
+  if (auto breakOffsets = cjkCharacterBreakByteOffsets(word); !breakOffsets.empty()) {
+    pushBrokenWord(std::move(word), breakOffsets);
     if (wordStartsRtl) {
       hasRtlWord = true;
     }
@@ -337,6 +359,22 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
 
   if (containsCjkBreakableCodepoint(word)) {
     pushToken(std::move(word), effectiveAttachToPrevious, effectiveNoSpaceBefore, false);
+    if (wordStartsRtl) {
+      hasRtlWord = true;
+    }
+    return;
+  }
+
+  // Thai word-break segmentation via lexicon forward maximal matching.
+  // containsThaiCodepoint() gates this path. thaiWordBreakByteOffsets() returns
+  // cluster-aligned break offsets (never inside a base+mark group), so each
+  // token renders as one self-contained drawText with no cross-token mark
+  // dependency. An empty offsets vector means a single unsplittable Thai word;
+  // pushBrokenWord pushes it as one token (do NOT fall through to CJK, which
+  // would char-split).
+  if (containsThaiCodepoint(word)) {
+    auto breakOffsets = thaiWordBreakByteOffsets(word);
+    pushBrokenWord(std::move(word), breakOffsets);
     if (wordStartsRtl) {
       hasRtlWord = true;
     }

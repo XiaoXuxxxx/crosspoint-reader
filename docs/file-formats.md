@@ -90,7 +90,29 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 30
+### Version 34
+
+Bumped from version 33. Version 34 adds:
+
+- Thai lexicon word-break segmentation (`ThaiSegmenter`): Thai text is split
+  into lexicon words instead of falling back to CJK per-character breaks.
+- Thai Sara Am (U+0E33) decomposition at layout time: `utf8DecomposeThaiSaraAm`
+  runs in `ParsedText::addWord` so that both the segmenter lexicon lookup and the
+  renderer see the decomposed form (Nikhahit U+0E4D + Sara Aa U+0E32), matching
+  the generator's `decompose_sara_am()` rule exactly.
+
+Caches from versions 25–33 are automatically invalidated and rebuilt.
+
+Version 33 added native `<ruby>`/`<rt>` support for Chinese and Japanese: each
+TextBlock word can carry an associated ruby (furigana/pinyin) string.
+
+Version 32 added ImageBlock serialization of the book-internal source href
+after the cache path, for lazy image extraction (images are header-probed at
+build time and extracted on first render).
+
+Version 31 is binary-identical to version 30. The version was bumped because a
+CJK MAX_WORD_SIZE split fix changed which word-continuation flags get set, so
+flags cached by v30 no longer match.
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
@@ -125,7 +147,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 30
+#define EXPECTED_VERSION 34
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96

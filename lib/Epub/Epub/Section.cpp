@@ -21,7 +21,11 @@ namespace {
 //      (lazy extraction: images are header-probed at build time and extracted on
 //      first render).
 // v33: Support <ruby> and <rt> tags. Skip <rp> tags
-constexpr uint8_t SECTION_FILE_VERSION = 33;
+// v34: Thai lexicon word-break segmentation (ThaiSegmenter) and Sara Am
+//      (U+0E33) decomposition at layout time change what a TextBlock's word
+//      data holds for Thai text; cached v33 positions don't reflect the new
+//      token boundaries.
+constexpr uint8_t SECTION_FILE_VERSION = 34;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

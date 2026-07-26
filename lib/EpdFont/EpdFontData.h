@@ -96,14 +96,70 @@ constexpr int anchorOverRotated90CW(const Anchor anchor, const int baseCursorPos
 /// For combining marks that sit entirely above the baseline, compute how many
 /// pixels to raise the mark so there is at least MIN_GAP_PX between its bottom
 /// edge and the top of the base glyph.  Returns 0 for marks that extend to or
-/// below the baseline (e.g. cedilla, dot-below, ogonek) and for anchors that
-/// keep the font-native height (dagesh must stay inside the letter, the
-/// shin/sin dots touch its arms).
-constexpr int raiseAboveBase(const Anchor anchor, const int markTop, const int markHeight, const int baseTop) {
+/// below the baseline (e.g. cedilla, dot-below, ogonek) and for anchors
+/// that keep the font-native height (dagesh must stay inside the letter,
+/// the shin/sin dots touch its arms).
+/// `level` defaults to 1 for backward compatibility with existing Hebrew/Latin
+/// marks; Thai above-marks pass their level (1+) for proper stacking height.
+constexpr int raiseAboveBase(const Anchor anchor, const int markTop, const int markHeight, const int baseTop, const int level = 1) {
   if (anchor != Anchor::CenterRaised) return 0;
   if (markTop - markHeight <= 0) return 0;
   const int gap = markTop - markHeight - baseTop;
-  return (gap < MIN_GAP_PX) ? (MIN_GAP_PX - gap) : 0;
+  const int minGap = MIN_GAP_PX * level;
+  return (gap < minGap) ? (minGap - gap) : 0;
+}
+
+/// The mark's own top edge after `raiseAboveBase` has raised it by `raiseBy`, expressed in the
+/// same "larger = higher above baseline" convention as `markTop`/`baseTop` (a raised glyph is
+/// drawn at `cursorY - raiseBy`, which moves its screen position up, so its equivalent top for
+/// a further raiseAboveBase() call is `markTop + raiseBy`, not `markTop - raiseBy`).
+/// Used to stack a third-level Thai mark (e.g. a tone mark) on top of a second-level mark
+/// (e.g. an above-vowel) that itself needed raising to clear a tall (ascender) base consonant.
+constexpr int raisedMarkTop(const int markTop, const int raiseBy) { return markTop + raiseBy; }
+
+/// Mirror of raiseAboveBase for marks that sit below the baseline (Thai below-vowels).
+/// Computes how many pixels to lower the mark so there is at least
+/// MIN_GAP_PX * level between the mark's top edge and the base glyph's bottom edge.
+/// `baseBottom` is the base glyph's bottom edge (baseTop - baseHeight, negative for descenders).
+/// `markTop` is the mark glyph's top (typically near 0 for below-base marks).
+/// `level` is 1 for Below1, 2 for Below2.
+constexpr int lowerBelowBase(int markTop, int baseBottom, int level = 1) {
+  const int gap = markTop - baseBottom;
+  const int minGap = MIN_GAP_PX * level;
+  return (gap < minGap) ? (minGap - gap) : 0;
+}
+
+// Thai consonant class for mark positioning, aligned with libthai (thctype.c).
+// Ascenders (overshoot) have a tall left stem — above-marks shift LEFT to clear it.
+// Descenders (undershoot) extend below baseline — below-marks need extra lowering.
+// Undersplit consonants have a split part below baseline — below-marks need extra
+// lowering like descenders, and the split tail may need special handling.
+enum class ThaiConsonantClass : uint8_t {
+  Regular = 0,
+  Ascender,    // ป ฝ ฟ ฬ (U+0E1B, U+0E1D, U+0E1F, U+0E2C) — tall left stem
+  Descender,   // ฎ ฏ (U+0E0E, U+0E0F) — extends below baseline
+  Undersplit,  // ญ ฐ (U+0E0D, U+0E10) — split part below baseline
+};
+
+constexpr ThaiConsonantClass thaiConsonantClass(const uint32_t cp) {
+  // Ascenders (overshoot): ป (U+0E1B), ฝ (U+0E1D), ฟ (U+0E1F), ฬ (U+0E2C)
+  if (cp == 0x0E1B || cp == 0x0E1D || cp == 0x0E1F || cp == 0x0E2C) return ThaiConsonantClass::Ascender;
+  // Descenders (undershoot): ฎ (U+0E0E), ฏ (U+0E0F)
+  if (cp == 0x0E0E || cp == 0x0E0F) return ThaiConsonantClass::Descender;
+  // Undersplit: ญ (U+0E0D), ฐ (U+0E10) — split tail below baseline
+  if (cp == 0x0E0D || cp == 0x0E10) return ThaiConsonantClass::Undersplit;
+  return ThaiConsonantClass::Regular;
+}
+
+/// Horizontal shift for Thai above-marks on ascender consonants.
+/// Ascenders (ป ฝ ฟ ฬ) have a tall left stem; shift the mark LEFT so it
+/// doesn't overlap the stem.  Returns 0 for non-ascender bases.
+/// Aligned with libthai thrend.c: ascender consonants use shiftleft glyph variant.
+constexpr int thaiAboveMarkShiftX(const uint32_t baseCp, const int markWidth) {
+  if (thaiConsonantClass(baseCp) == ThaiConsonantClass::Ascender) {
+    return -(markWidth / 4);  // shift LEFT by ~25% of mark width
+  }
+  return 0;
 }
 
 }  // namespace combiningMark
