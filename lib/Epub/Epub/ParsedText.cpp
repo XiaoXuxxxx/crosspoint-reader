@@ -12,8 +12,10 @@
 #include <vector>
 
 #include "TokenBoundary.h"
+#include "VisibleTextOffset.h"
 #include "hyphenation/HyphenationCommon.h"
 #include "hyphenation/Hyphenator.h"
+#include "thai/ThaiSegmenter.h"
 
 constexpr int MAX_COST = std::numeric_limits<int>::max();
 
@@ -136,17 +138,6 @@ bool containsCjkBreakableCodepoint(const std::string& text) {
     }
   }
   return false;
-}
-
-uint32_t countCodepoints(const std::string_view text) {
-  const auto* ptr = reinterpret_cast<const unsigned char*>(text.data());
-  const auto* const end = ptr + text.size();
-  uint32_t count = 0;
-  while (ptr < end) {
-    utf8NextCodepoint(&ptr);
-    count++;
-  }
-  return count;
 }
 
 bool hasCjkBreakOpportunityBetween(const uint32_t leftCp, const uint32_t rightCp) {
@@ -390,13 +381,22 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
                          const bool attachToPrevious, const uint32_t visibleTextOffset) {
   if (word.empty()) return;
 
+  // Keep the source spelling alongside the normalized rendering spelling. In
+  // particular, Sara Am decomposition below must not change visible offsets.
+  std::string sourceWord = std::move(word);
+
   // The device fonts carry no combining-mark positioning, so EPUB text stored in NFD
   // (a base letter followed by separate combining accents -- common for Vietnamese,
   // and used for many EPUB <h1> chapter headings) renders with the marks detached or
   // misplaced. Compose to NFC here, the single funnel every word passes through, so a
   // precomposed glyph is used instead. This runs once per word at layout time (the
   // result is cached in the section file) and is a cheap no-op for mark-free text.
-  word = utf8ComposeNfc(word);
+  word = utf8ComposeNfc(sourceWord);
+  // Decompose Thai Sara Am (U+0E33) → Nikhahit (U+0E4D) + Sara Aa (U+0E32) with
+  // tone-mark reordering.  Runs after utf8ComposeNfc (input is already NFC) so that
+  // both the Thai segmenter lexicon lookup and the renderer see the decomposed form.
+  // Fast-path: no-op for non-Thai text (checks for 0xE0 0xB8 0xB3 byte sequence).
+  word = utf8DecomposeThaiSaraAm(word);
 
   EpdFontFamily::Style baseStyle = fontStyle;
   if (underline) {
@@ -452,26 +452,54 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordVisibleOffsetDeltas.reserve(newCapacity);
   };
 
-  if (auto breakOffsets = cjkCharacterBreakByteOffsets(word); !breakOffsets.empty()) {
-    // CJK-heavy paragraphs can push hundreds of tiny tokens quickly when CSS toggles
-    // inline styles. Reserve once up front to avoid repeated vector growth reallocations.
+  // Splits `tokenWord` into multiple tokens at `breakOffsets` (ascending byte
+  // offsets strictly between 0 and tokenWord.size()), or pushes it whole as a
+  // single token when no breaks are given. Shared by the CJK and Thai
+  // word-break paths below: both can turn one "word" into many tiny tokens
+  // (CJK/Thai text has no inter-word spaces), so both need the up-front
+  // capacity reservation and the same first-token-attaches /
+  // later-tokens-no-space rule.
+  const auto pushBrokenWord = [&](std::string tokenWord, const std::vector<size_t>& breakOffsets) {
+    uint32_t tokenVisibleOffset = visibleTextOffset;
+    if (breakOffsets.empty()) {
+      pushToken(std::move(tokenWord), effectiveAttachToPrevious, effectiveNoSpaceBefore, false, tokenVisibleOffset);
+      return;
+    }
+    // CJK/Thai-heavy paragraphs can push hundreds of tiny tokens quickly when CSS
+    // toggles inline styles. Reserve once up front to avoid repeated vector growth
+    // reallocations.
     ensureTokenCapacity(breakOffsets.size() + 1);
     bool firstToken = true;
     size_t tokenStart = 0;
-    uint32_t tokenVisibleOffset = visibleTextOffset;
     for (const size_t breakOffset : breakOffsets) {
-      if (breakOffset <= tokenStart || breakOffset > word.size()) continue;
-      const std::string_view token(word.data() + tokenStart, breakOffset - tokenStart);
+      if (breakOffset <= tokenStart || breakOffset > tokenWord.size()) continue;
+      tokenVisibleOffset = visibleTextOffset +
+                           VisibleTextOffset::originalCodepointsBeforeRenderedOffset(sourceWord, tokenWord, tokenStart);
+      const std::string_view token(tokenWord.data() + tokenStart, breakOffset - tokenStart);
       pushToken(std::string(token), firstToken ? effectiveAttachToPrevious : false,
                 firstToken ? effectiveNoSpaceBefore : true, /*focusBoundary=*/0, tokenVisibleOffset);
-      tokenVisibleOffset += countCodepoints(token);
       firstToken = false;
       tokenStart = breakOffset;
     }
-    if (tokenStart < word.size()) {
-      pushToken(word.substr(tokenStart), firstToken ? effectiveAttachToPrevious : false,
+    if (tokenStart < tokenWord.size()) {
+      tokenVisibleOffset = visibleTextOffset +
+                           VisibleTextOffset::originalCodepointsBeforeRenderedOffset(sourceWord, tokenWord, tokenStart);
+      pushToken(tokenWord.substr(tokenStart), firstToken ? effectiveAttachToPrevious : false,
                 firstToken ? effectiveNoSpaceBefore : true, /*focusBoundary=*/0, tokenVisibleOffset);
     }
+  };
+
+  const bool hasThai = containsThaiCodepoint(word);
+  auto breakOffsets = cjkCharacterBreakByteOffsets(word);
+  if (hasThai) {
+    auto thaiBreakOffsets = thaiWordBreakByteOffsets(word);
+    breakOffsets.insert(breakOffsets.end(), thaiBreakOffsets.begin(), thaiBreakOffsets.end());
+    std::sort(breakOffsets.begin(), breakOffsets.end());
+    breakOffsets.erase(std::unique(breakOffsets.begin(), breakOffsets.end()), breakOffsets.end());
+  }
+
+  if (!breakOffsets.empty()) {
+    pushBrokenWord(std::move(word), breakOffsets);
     if (wordStartsRtl) {
       hasRtlWord = true;
     }
@@ -481,6 +509,21 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   if (containsCjkBreakableCodepoint(word)) {
     pushToken(std::move(word), effectiveAttachToPrevious, effectiveNoSpaceBefore, /*focusBoundary=*/0,
               visibleTextOffset);
+    if (wordStartsRtl) {
+      hasRtlWord = true;
+    }
+    return;
+  }
+
+  // Thai word-break segmentation via lexicon forward maximal matching.
+  // containsThaiCodepoint() gates this path. thaiWordBreakByteOffsets() returns
+  // cluster-aligned break offsets (never inside a base+mark group), so each
+  // token renders as one self-contained drawText with no cross-token mark
+  // dependency. An empty offsets vector means a single unsplittable Thai word;
+  // pushBrokenWord pushes it as one token (do NOT fall through to CJK, which
+  // would char-split).
+  if (hasThai) {
+    pushBrokenWord(std::move(word), breakOffsets);
     if (wordStartsRtl) {
       hasRtlWord = true;
     }
@@ -507,12 +550,10 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   auto processSegment = [&](std::string_view segment, bool isWord, bool attach, bool noSpaceBefore) {
     const unsigned char* wordBegin = reinterpret_cast<const unsigned char*>(word.data());
     const unsigned char* segmentBegin = reinterpret_cast<const unsigned char*>(segment.data());
-    uint32_t segmentOffset = visibleTextOffset;
-    const unsigned char* offsetPtr = wordBegin;
-    while (offsetPtr < segmentBegin) {
-      utf8NextCodepoint(&offsetPtr);
-      segmentOffset++;
-    }
+    const size_t segmentByteOffset = static_cast<size_t>(segmentBegin - wordBegin);
+    const uint32_t segmentOffset =
+        visibleTextOffset +
+        VisibleTextOffset::originalCodepointsBeforeRenderedOffset(sourceWord, word, segmentByteOffset);
     if (!isWord) {
       // Punctuation and Numbers stay regular
       words.emplace_back(segment);

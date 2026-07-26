@@ -37,7 +37,11 @@ namespace {
 //      break opportunity, and hyphenation of a focus-split word considers the whole word
 //      instead of only its regular-weight suffix. Pages cached by older versions were laid
 //      out with the previous, more restrictive break set and no longer match.
-constexpr uint8_t SECTION_FILE_VERSION = 38;
+// v39: Thai lexicon word-break segmentation (ThaiSegmenter) and Sara Am
+//      (U+0E33) decomposition at layout time change what a TextBlock's word
+//      data holds for Thai text. Invalidates v38 and older caches while
+//      retaining the established visible-offset and layout format.
+constexpr uint8_t SECTION_FILE_VERSION = 39;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
