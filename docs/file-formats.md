@@ -90,6 +90,15 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 42
+
+Bumped from version 41. Version 42 adds Thai lexicon word-break segmentation
+and Thai Sara Am (U+0E33) decomposition at layout time. Thai token offsets
+remain based on the original source codepoints, while decomposed text is used
+for rendering and lexicon lookup.
+
+Caches from versions 25–41 are automatically invalidated and rebuilt.
+
 ### Version 41
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
@@ -158,7 +167,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 41
+#define EXPECTED_VERSION 42
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

@@ -79,7 +79,6 @@ for size in ${UI_FONT_SIZES[@]}; do
     # Ubuntu lacks the Thai block (U+0E00-U+0E7F). Append NotoSansThai so Thai
     # glyphs are filled from it; the --additional-intervals below exports the
     # Thai code point range (converter self-trims unassigned/missing glyphs).
-    thai_path="../builtinFonts/source/NotoSansThai/NotoSansThai-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
     # Every face in this stack is optically weighted for monochrome rendering.
     # Medium uses the regular Thai face because no Thai Medium source is shipped.
