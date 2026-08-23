@@ -81,9 +81,11 @@ for size in ${UI_FONT_SIZES[@]}; do
     # Thai code point range (converter self-trims unassigned/missing glyphs).
     output_path="../builtinFonts/${font_name}.h"
     # Every face in this stack is optically weighted for monochrome rendering.
-    # Medium uses the regular Thai face because no Thai Medium source is shipped.
-    if [ "$style" = "Medium" ]; then thai_style="Regular"; else thai_style="$style"; fi
-    thai_path="../builtinFonts/source/NotoSansThai/NotoSansThai-${thai_style}.ttf"
+    if [ "$style" = "Medium" ]; then
+      thai_path="../builtinFonts/source/NotoSansThai/NotoSansThai-UIMedium.ttf"
+    else
+      thai_path="../builtinFonts/source/NotoSansThai/NotoSansThai-Bold.ttf"
+    fi
     python fontconvert.py $font_name $size $font_path $hebrew_path $arabic_path $viet_path $thai_path \
       --mono --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" \
       --additional-intervals 0x0E00,0x0E7F > $output_path

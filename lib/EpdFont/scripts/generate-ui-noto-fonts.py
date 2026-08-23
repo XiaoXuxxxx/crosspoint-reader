@@ -34,6 +34,12 @@ FAMILIES = (
             ("NotoSansArabic-UIBold.ttf", {"wght": 900, "wdth": 90}),
         ),
     },
+    {
+        "directory": "NotoSansThai",
+        "source": "NotoSansThai-Regular.ttf",
+        "sha256": "2c1b7e54176f287e957ff9ea9ac124361c702d3f5ef34498bfd64ebd152b27a6",
+        "instances": (("NotoSansThai-UIMedium.ttf", {"wght": 550}),),
+    },
 )
 
 
