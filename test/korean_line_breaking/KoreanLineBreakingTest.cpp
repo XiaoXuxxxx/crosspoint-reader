@@ -93,3 +93,27 @@ TEST(KoreanLineBreaking, HyphenationOnSplitsBetweenDigitAndHangul) {
   const std::vector<std::vector<std::string>> expected{{"가나다", "12"}, {"월부터", "자"}};
   EXPECT_EQ(wordsOf(lines), expected);
 }
+
+// Thai has no spaces or hyphens: a word wider than the line splits between clusters,
+// never before a mark or the Sara Aa of a decomposed Sara Am, and without a hyphen.
+TEST(ThaiLineBreaking, OverlongWordSplitsBetweenClustersWithoutHyphen) {
+  Hyphenator::setPreferredLanguage("th");
+  GfxRenderer renderer;
+  BlockStyle style;
+  style.alignment = CssTextAlign::Left;
+  style.textIndentDefined = true;
+  ParsedText text(false, false, style, 0);
+  // น้ำค้าง lays out as five 8 px glyphs (marks are zero-width), wider than 32 px.
+  text.addWord("น้ำค้าง", EpdFontFamily::REGULAR, false, false, /*visibleTextOffset=*/1000);
+  std::vector<std::string> lines;
+  std::vector<uint32_t> offsets;
+  text.layoutAndExtractLines(renderer, 0, 32, [&](std::unique_ptr<TextBlock> block, const uint32_t offset) {
+    std::string line;
+    for (uint16_t i = 0; i < block->wordCount(); ++i) line += block->wordText(i);
+    lines.push_back(line);
+    offsets.push_back(offset);
+  });
+  EXPECT_EQ(lines, (std::vector<std::string>{utf8DecomposeThaiSaraAm("น้ำ"), "ค้าง"}));
+  // ค้าง starts after the three source codepoints of น้ำ.
+  EXPECT_EQ(offsets, (std::vector<uint32_t>{1000, 1003}));
+}

@@ -31,6 +31,7 @@ target_include_directories(ChapterHtmlSlimParserTest PRIVATE
 
 target_link_libraries(ChapterHtmlSlimParserTest PRIVATE
   crosspoint_test_common
+  crosspoint_thai_segmenter
   GTest::gtest_main
   expat
 )

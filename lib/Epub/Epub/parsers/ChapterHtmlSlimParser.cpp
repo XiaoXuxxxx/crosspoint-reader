@@ -1557,6 +1557,36 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   self->depth += 1;
 }
 
+// Find the byte offset where the last combining cluster in buf[0..len) begins.
+// A cluster is a base codepoint + any trailing combining marks (Thai vowels/tone
+// marks, Latin diacritics, etc.) and Thai signs that cannot start a line, such
+// as Sara Am; a Thai leading vowel joins the consonant after it. Returns 0 if
+// the buffer is empty or holds no base. Used by the MAX_WORD_SIZE overflow path
+// to keep a cluster together when flushing, so a chunk never starts with a mark
+// (which would lose its base) or a sign that belongs to the previous syllable.
+static int lastClusterStart(const char* buf, int len) {
+  if (len <= 0) return 0;
+  const auto codepointAt = [buf](const int offset) {
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(buf + offset);
+    return utf8NextCodepoint(&p);
+  };
+  int pos = len;
+  while (pos > 0) {
+    const int start = static_cast<int>(utf8LastCodepointStart(buf, static_cast<size_t>(pos)));
+    const uint32_t cp = codepointAt(start);
+    if (!utf8IsCombiningMark(cp) && !utf8IsThaiNonStarter(cp)) {
+      // Base char found — the cluster starts here, or at its leading vowel.
+      if (start > 0) {
+        const int previous = static_cast<int>(utf8LastCodepointStart(buf, static_cast<size_t>(start)));
+        if (utf8IsThaiLeadingVowel(codepointAt(previous))) return previous;
+      }
+      return start;
+    }
+    pos = start;  // Attached to the codepoint before it, keep walking back.
+  }
+  return 0;  // No base (malformed input).
+}
+
 void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
   const bool countVisibleOffsets = self->insideBody && self->nonVisibleTextDepth == 0 && !self->syntheticCharacterData;
@@ -1729,15 +1759,29 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     }
 
     // If we're about to run out of space, then cut the word off and start a new one.
-    // For CJK text (no spaces), this is the primary word-breaking mechanism.
+    // For CJK/Thai text (no inter-word spaces), this is the primary word-breaking mechanism.
     // We must avoid splitting multi-byte UTF-8 sequences across word boundaries,
     // otherwise the trailing bytes become orphaned continuation bytes that the
     // decoder can't interpret.
     if (self->partWordBufferIndex >= MAX_WORD_SIZE) {
       int safeLen = utf8SafeTruncateBuffer(self->partWordBuffer, self->partWordBufferIndex);
 
+      // Pull the last cluster (see lastClusterStart) into the next chunk so a mark
+      // is never orphaned at a chunk start — the renderer drops leading marks
+      // (lastBaseCp==0), which silently lost Thai sara i. Bounded to SAVED_MAX so a
+      // pathological mark run can't overflow saved[]; if it won't fit, keep the plain
+      // UTF-8-safe split. (CJK: just moves the last char over, harmless.)
+      constexpr int SAVED_MAX = 32;
+      if (safeLen > 0) {
+        const int clusterStart = lastClusterStart(self->partWordBuffer, safeLen);
+        if (self->partWordBufferIndex - clusterStart <= SAVED_MAX) {
+          safeLen = clusterStart;
+        }
+      }
+
       if (safeLen < self->partWordBufferIndex && safeLen > 0) {
-        // Incomplete UTF-8 sequence at the end — save it before flushing
+        // Save the overflow (incomplete UTF-8 tail and/or a pulled-back cluster)
+        // before flushing, then restore it as the start of the next chunk.
         int overflow = self->partWordBufferIndex - safeLen;
         uint32_t overflowVisibleOffset = self->partWordVisibleOffset;
         const unsigned char* offsetPtr = reinterpret_cast<const unsigned char*>(self->partWordBuffer);
@@ -1746,7 +1790,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
           utf8NextCodepoint(&offsetPtr);
           overflowVisibleOffset++;
         }
-        char saved[4];
+        char saved[SAVED_MAX];
         for (int j = 0; j < overflow; j++) {
           saved[j] = self->partWordBuffer[safeLen + j];
         }

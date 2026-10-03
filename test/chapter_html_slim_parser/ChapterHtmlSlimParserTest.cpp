@@ -469,3 +469,70 @@ TEST(KoreanLayout, HangulGluedAcrossInlineStyleIsUnbreakable) {
   const std::vector<std::vector<std::string>> expected{{"가나"}, {"한국", "어"}};
   EXPECT_EQ(lines, expected);
 }
+
+namespace {
+
+std::vector<std::string> thaiTokensOf(const char* word) {
+  BlockStyle style;
+  style.textIndentDefined = true;
+  ParsedText text(false, false, style, 0);
+  text.addWord(word, EpdFontFamily::REGULAR);
+  std::vector<std::string> tokens;
+  for (size_t i = 0; i < text.size(); i++) tokens.emplace_back(text.wordAt(i));
+  return tokens;
+}
+
+uint32_t firstCodepointOf(const std::string_view word) {
+  const auto* p = reinterpret_cast<const unsigned char*>(word.data());
+  return utf8NextCodepoint(&p);
+}
+
+// Source codepoints in a rendered token: Sara Am was split into Nikhahit + Sara Aa.
+uint32_t sourceCodepointsOf(const std::string_view word) {
+  uint32_t count = 0;
+  const auto* p = reinterpret_cast<const unsigned char*>(word.data());
+  const auto* const end = p + word.size();
+  while (p < end) {
+    if (utf8NextCodepoint(&p) != 0x0E4D) count++;
+  }
+  return count;
+}
+
+}  // namespace
+
+TEST(ThaiLayout, PunctuationStaysOnTheThaiWordItTouches) {
+  using Tokens = std::vector<std::string>;
+  EXPECT_EQ(thaiTokensOf("(ภาษาไทย),"), (Tokens{"(ภาษา", "ไทย),"}));
+  EXPECT_EQ(thaiTokensOf("“ภาษาไทย”"), (Tokens{"“ภาษา", "ไทย”"}));
+  EXPECT_EQ(thaiTokensOf("ไทย."), Tokens{"ไทย."});
+  EXPECT_EQ(thaiTokensOf("ไทย's"), Tokens{"ไทย's"});
+  EXPECT_EQ(thaiTokensOf("\"ไทย\""), Tokens{"\"ไทย\""});
+  EXPECT_EQ(thaiTokensOf("ไทย-อังกฤษ"), (Tokens{"ไทย-", "อังกฤษ"}));
+  // Letters on both sides still break.
+  EXPECT_EQ(thaiTokensOf("ภาษาEnglish"), (Tokens{"ภาษา", "English"}));
+}
+
+// A space-free Thai run is flushed in MAX_WORD_SIZE chunks. The 200-byte chunk boundary
+// here falls right after Sara Am (codepoint 66), whose base and tone sit before it.
+TEST_F(ChapterHtmlSlimParserTest, LongThaiRunNeverStartsAChunkInsideASyllable) {
+  std::string text;
+  for (int i = 0; i < 9; i++) text += "ภาษาไทย";  // 63 codepoints
+  text += "น้ำใจดีมาก ";
+
+  parser.beginParse();
+  ChapterHtmlSlimParser::startElement(&parser, "body", nullptr);
+  ChapterHtmlSlimParser::startElement(&parser, "p", nullptr);
+  ChapterHtmlSlimParser::characterData(&parser, text.c_str(), static_cast<int>(text.size()));
+
+  const ParsedText& block = *parser.currentTextBlock;
+  ASSERT_GT(block.size(), 1u);
+  uint32_t expectedOffset = block.visibleOffsetAt(0);
+  for (size_t i = 0; i < block.size(); i++) {
+    const std::string_view word = block.wordAt(i);
+    const uint32_t first = firstCodepointOf(word);
+    EXPECT_FALSE(utf8IsCombiningMark(first) || utf8IsThaiNonStarter(first)) << "token " << i;
+    EXPECT_EQ(block.visibleOffsetAt(i), expectedOffset) << "token " << i;
+    expectedOffset += sourceCodepointsOf(word);
+  }
+  EXPECT_EQ(expectedOffset - block.visibleOffsetAt(0), 73u);  // 63 + น้ำใจดีมาก
+}

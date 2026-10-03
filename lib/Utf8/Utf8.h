@@ -20,6 +20,12 @@ void utf8TruncateChars(std::string& str, size_t numChars);
 // filename written by macOS) otherwise renders broken or blank.
 std::string utf8ComposeNfc(const std::string& in);
 
+// The composition utf8ComposeNfc() applies to a pending base and the next
+// codepoint (a combining mark or a trailing Hangul jamo), or 0 when the pair
+// does not compose. Exposed for callers that must follow NFC codepoint by
+// codepoint, such as source-offset mapping.
+uint32_t utf8ComposePair(uint32_t base, uint32_t mark);
+
 // Compose a null-terminated display buffer without allocating or growing it.
 // Uncomposed bytes (including malformed UTF-8) are preserved unchanged.
 void utf8ComposeNfcInPlace(char* buffer);
@@ -40,6 +46,11 @@ uint32_t utf8DecomposedBase(uint32_t cp);
 // Returns the new length (<= len). If the buffer ends mid-sequence, the
 // incomplete trailing bytes are excluded.
 int utf8SafeTruncateBuffer(const char* buf, int len);
+
+// Returns the byte offset of the lead byte of the last complete UTF-8 codepoint
+// in buf[0, len). Returns 0 if len <= 0 or buf[0, len) holds only continuation
+// bytes (malformed input).
+size_t utf8LastCodepointStart(const char* buf, size_t len);
 
 // Returns true for CJK characters that break without hyphenation. Covers CJK Unified Ideographs,
 // Hiragana, Katakana, Hangul, CJK punctuation, and fullwidth forms. Han and Kana have implicit
@@ -96,10 +107,66 @@ inline bool utf8IsCjkCodepoint(const uint32_t cp) {
          || (cp >= 0x30000 && cp <= 0x323AF);  // CJK Extensions G-H
 }
 
+// Thai combining mark vertical level, aligned with libthai (thctype.c th_chlevel).
+// ABOVE1: above-vowels closest to base (libthai level 1)
+// ABOVE2: hilo-or-top marks — Mai Tai Khue, Nikhahit (libthai level 3)
+// ABOVE3: tone marks + thanthakhat (libthai level 2 / top)
+// BELOW1: below-vowels closest to base (libthai level -1)
+// BELOW2: Phinthu, lowest (libthai level -1)
+enum class ThaiMarkLevel : uint8_t {
+  None = 0,  // Not a Thai mark (Latin/Hebrew mark or base character)
+  Above1,    // U+0E31, U+0E34-0E37, U+0E4E (vowels + Mai Yamok above, closest to base)
+  Above2,    // U+0E47, U+0E4D (Mai Tai Khue, Nikhahit — hilo-or-top)
+  Above3,    // U+0E48-0E4C (tone marks + thanthakhat — top)
+  Below1,    // U+0E38-0E39 (vowels below, closest)
+  Below2,    // U+0E3A (Phinthu, lowest)
+};
+
+// Returns the Thai mark vertical level, or None if cp is not a Thai combining mark.
+// Classification follows libthai th_chlevel: U+0E4E is level 1 (with vowels),
+// U+0E4C is level 2 (with tone marks), U+0E47/U+0E4D are level 3 (hilo-or-top).
+// Single source of truth for Thai mark codepoint ranges — utf8IsThaiCombiningMark()
+// and utf8IsCombiningMark() below both derive from this instead of re-testing ranges.
+constexpr ThaiMarkLevel thaiMarkLevel(const uint32_t cp) {
+  if (cp == 0x0E31 || (cp >= 0x0E34 && cp <= 0x0E37) || cp == 0x0E4E) return ThaiMarkLevel::Above1;
+  if (cp == 0x0E47 || cp == 0x0E4D) return ThaiMarkLevel::Above2;
+  if (cp >= 0x0E48 && cp <= 0x0E4C) return ThaiMarkLevel::Above3;
+  if (cp >= 0x0E38 && cp <= 0x0E39) return ThaiMarkLevel::Below1;
+  if (cp == 0x0E3A) return ThaiMarkLevel::Below2;
+  return ThaiMarkLevel::None;
+}
+
+// Returns true for Thai combining marks (above-vowels, below-vowels, tone marks, etc.).
+// Used to apply Thai-specific mark positioning (post-base pen position) instead of
+// the generic centerOver() approach.
+constexpr bool utf8IsThaiCombiningMark(const uint32_t cp) { return thaiMarkLevel(cp) != ThaiMarkLevel::None; }
+
+// Thai letters, vowels, marks, digits and signs (U+0E01-0E5B).
+constexpr bool utf8IsThaiCodepoint(const uint32_t cp) { return cp >= 0x0E01 && cp <= 0x0E5B; }
+
+// Thai leading vowels (U+0E40-0E44), written before the consonant they follow in speech.
+constexpr bool utf8IsThaiLeadingVowel(const uint32_t cp) { return cp >= 0x0E40 && cp <= 0x0E44; }
+
+// Thai spacing signs that close a syllable or word and so cannot start a line:
+// Paiyannoi (U+0E2F), Sara A (U+0E30), Sara Aa (U+0E32), Sara Am (U+0E33),
+// Lakkhangyao (U+0E45) and Mai Yamok (U+0E46).
+constexpr bool utf8IsThaiNonStarter(const uint32_t cp) {
+  return cp == 0x0E2F || cp == 0x0E30 || cp == 0x0E32 || cp == 0x0E33 || cp == 0x0E45 || cp == 0x0E46;
+}
+
 // Returns true for Unicode combining diacritical marks that should not advance the cursor.
 inline bool utf8IsCombiningMark(const uint32_t cp) {
-  return (cp >= 0x0300 && cp <= 0x036F)      // Combining Diacritical Marks
-         || (cp >= 0x1DC0 && cp <= 0x1DFF)   // Combining Diacritical Marks Supplement
-         || (cp >= 0x20D0 && cp <= 0x20FF)   // Combining Diacritical Marks for Symbols
-         || (cp >= 0xFE20 && cp <= 0xFE2F);  // Combining Half Marks
+  if (cp < 0x0300) return false;            // ASCII and Latin-1: the common case
+  return cp <= 0x036F                       // Combining Diacritical Marks
+         || (cp >= 0x1DC0 && cp <= 0x1DFF)  // Combining Diacritical Marks Supplement
+         || (cp >= 0x20D0 && cp <= 0x20FF)  // Combining Diacritical Marks for Symbols
+         || (cp >= 0xFE20 && cp <= 0xFE2F)  // Combining Half Marks
+         || utf8IsThaiCombiningMark(cp);
 }
+
+// Decompose U+0E33 (Sara Am) → U+0E4D (Nikhahit) + U+0E32 (Sara Aa) with tone reorder.
+// If tone marks (U+0E48-0E4B) precede the Sara Am, Nikhahit is inserted before them:
+//   <C, tone, 0E33> → <C, 0E4D, tone, 0E32>
+// This matches the gen_thai_lexicon.py decompose_sara_am() rule exactly.
+// Text without Sara Am is returned as is (moved, not copied).
+std::string utf8DecomposeThaiSaraAm(std::string in);

@@ -90,6 +90,15 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 51
+
+Version 51 keeps the version 50 serialized layout unchanged. It was bumped
+because Thai text is now split into words by a lexicon word-break segmenter,
+and Thai Sara Am (U+0E33) is decomposed at layout time. Thai token offsets
+remain based on the original source codepoints, while the decomposed text is
+used for rendering and lexicon lookup. Cached word contents and line breaks
+from version 50 no longer match.
+
 ### Version 50
 
 The header adds `paragraphIndentSpaces` after `extraParagraphSpacing`. The value
@@ -207,7 +216,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 50
+#define EXPECTED_VERSION 51
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

@@ -84,6 +84,20 @@ std::vector<Hyphenator::BreakInfo> buildExplicitBreakInfos(const std::vector<Cod
 
 bool isSegmentSeparator(const uint32_t cp) { return isExplicitHyphen(cp) || isApostrophe(cp); }
 
+// Fallback breaks may fall between any two codepoints except inside a cluster:
+// never before a combining mark or a sign closing a Thai syllable, nor after a
+// Thai leading vowel. `idx` is in [1, cps.size()).
+bool fallbackBreakAllowed(const std::vector<CodepointInfo>& cps, const size_t idx) {
+  const uint32_t cp = cps[idx].value;
+  return !utf8IsCombiningMark(cp) && !utf8IsThaiNonStarter(cp) && !utf8IsThaiLeadingVowel(cps[idx - 1].value);
+}
+
+// CJK and Thai are written without hyphens, so a break touching either inserts none.
+bool needsInsertedHyphen(const std::vector<CodepointInfo>& cps, const size_t idx) {
+  const auto unhyphenated = [](const uint32_t cp) { return utf8IsCjkBreakable(cp) || utf8IsThaiCodepoint(cp); };
+  return !(idx < cps.size() && unhyphenated(cps[idx].value)) && !(idx > 0 && unhyphenated(cps[idx - 1].value));
+}
+
 void appendSegmentPatternBreaks(const std::vector<CodepointInfo>& cps, const LanguageHyphenator& hyphenator,
                                 const bool includeFallback, std::vector<Hyphenator::BreakInfo>& outBreaks) {
   size_t segStart = 0;
@@ -103,7 +117,7 @@ void appendSegmentPatternBreaks(const std::vector<CodepointInfo>& cps, const Lan
         const size_t minPrefix = hyphenator.minPrefix();
         const size_t minSuffix = hyphenator.minSuffix();
         for (size_t idx = minPrefix; idx + minSuffix <= segment.size(); ++idx) {
-          segIndexes.push_back(idx);
+          if (fallbackBreakAllowed(segment, idx)) segIndexes.push_back(idx);
         }
       }
 
@@ -112,7 +126,7 @@ void appendSegmentPatternBreaks(const std::vector<CodepointInfo>& cps, const Lan
         if (idx == 0 || idx >= segment.size()) continue;
         const size_t cpIdx = segStart + idx;
         if (cpIdx < cps.size()) {
-          outBreaks.push_back({cps[cpIdx].byteOffset, true});
+          outBreaks.push_back({cps[cpIdx].byteOffset, needsInsertedHyphen(cps, cpIdx)});
         }
       }
     }
@@ -246,7 +260,7 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
     const size_t minPrefix = hyphenator ? hyphenator->minPrefix() : LiangWordConfig::kDefaultMinPrefix;
     const size_t minSuffix = hyphenator ? hyphenator->minSuffix() : LiangWordConfig::kDefaultMinSuffix;
     for (size_t idx = minPrefix; idx + minSuffix <= cps.size(); ++idx) {
-      indexes.push_back(idx);
+      if (fallbackBreakAllowed(cps, idx)) indexes.push_back(idx);
     }
   }
 
@@ -257,16 +271,7 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
   std::vector<Hyphenator::BreakInfo> breaks;
   breaks.reserve(indexes.size());
   for (const size_t idx : indexes) {
-    // CJK characters can break without inserting a visible hyphen.
-    // Check the codepoint at the break position: if it's a CJK character,
-    // no hyphen is needed since CJK scripts don't use hyphenation.
-    bool needsHyphen = true;
-    if (idx < cps.size() && utf8IsCjkBreakable(cps[idx].value)) {
-      needsHyphen = false;
-    } else if (idx > 0 && utf8IsCjkBreakable(cps[idx - 1].value)) {
-      needsHyphen = false;
-    }
-    breaks.push_back({byteOffsetForIndex(cps, idx), needsHyphen});
+    breaks.push_back({byteOffsetForIndex(cps, idx), needsInsertedHyphen(cps, idx)});
   }
 
   return breaks;
