@@ -106,6 +106,81 @@ constexpr int raiseAboveBase(const Anchor anchor, const int markTop, const int m
   return (gap < MIN_GAP_PX) ? (MIN_GAP_PX - gap) : 0;
 }
 
+/// The mark's own top edge after `raiseAboveBase` has raised it by `raiseBy`, expressed in the
+/// same "larger = higher above baseline" convention as `markTop`/`baseTop` (a raised glyph is
+/// drawn at `cursorY - raiseBy`, which moves its screen position up, so its equivalent top for
+/// a further raiseAboveBase() call is `markTop + raiseBy`, not `markTop - raiseBy`).
+/// Used to stack a Thai tone mark on the above-vowel drawn before it.
+constexpr int raisedMarkTop(const int markTop, const int raiseBy) { return markTop + raiseBy; }
+
+/// Mirror of raiseAboveBase for marks that hang below the baseline (Thai below-vowels):
+/// how many pixels to lower the mark so at least MIN_GAP_PX * level blank rows separate
+/// the base's lowest ink row from the mark's top row.  `baseBottom` is baseTop - baseHeight,
+/// the first row below the base's ink (negative for ฎ ฏ ญ ฐ, whose tails descend).
+constexpr int lowerBelowBase(const int markTop, const int baseBottom, const int level = 1) {
+  const int gap = baseBottom - markTop;
+  const int minGap = MIN_GAP_PX * level;
+  return (gap < minGap) ? (minGap - gap) : 0;
+}
+
+/// ป ฝ ฟ ฬ: Thai consonants whose tail rises on the right above the body,
+/// into the rows the above-marks occupy.
+constexpr bool isThaiAscenderConsonant(const uint32_t cp) {
+  return cp == 0x0E1B || cp == 0x0E1D || cp == 0x0E1F || cp == 0x0E2C;
+}
+
+/// Tail geometry of a Thai ascender consonant, read from its glyph bitmap.
+struct ThaiAscenderTail {
+  int bodyTop;   ///< top row of the body below the tail (same upward convention as EpdGlyph::top)
+  int tailLeft;  ///< leftmost tail column above the body, counted from the bitmap's left edge
+};
+
+/// Scan an ascender's bitmap from the top row down.  The first inked row is the
+/// tail tip; the first later row starting two or more columns left of the tail
+/// is the body (or ฬ's curl, which marks must clear vertically as well).
+/// `bitmap` uses the font's packing: contiguous MSB-first rows, 1 or 2 bits per
+/// pixel, 0 = no ink.
+constexpr ThaiAscenderTail findThaiAscenderTail(const uint8_t* bitmap, const int width, const int height, const int top,
+                                                const bool twoBit) {
+  int tailLeft = width;
+  for (int y = 0; y < height; y++) {
+    int first = 0;
+    for (; first < width; first++) {
+      const int i = y * width + first;
+      const int ink = twoBit ? (bitmap[i >> 2] >> (6 - (i & 3) * 2)) & 3 : (bitmap[i >> 3] >> (7 - (i & 7))) & 1;
+      if (ink != 0) break;
+    }
+    if (first == width) continue;
+    if (tailLeft == width) {
+      tailLeft = first;
+    } else if (first < tailLeft - 1) {
+      return {top - y, tailLeft};
+    } else if (first < tailLeft) {
+      tailLeft = first;
+    }
+  }
+  return {top - height + 1, tailLeft == width ? 0 : tailLeft};
+}
+
+/// Horizontal placement of an above-mark on an ascender consonant.
+struct ThaiAscenderMarkShift {
+  int shiftX;       ///< pixels to move the mark (<= 0, i.e. left)
+  bool clearsTail;  ///< one blank column separates the shifted mark from the tail
+};
+
+/// Move a mark spanning columns [markLeft, markRight] left until a blank column
+/// separates it from the tail starting at `tailLeft`, without moving its left edge
+/// past `minLeft` (the nearest obstacle in the previous cluster, or how far the
+/// mark may overhang its own base).  All arguments are screen columns.
+constexpr ThaiAscenderMarkShift thaiAscenderMarkShift(const int markLeft, const int markRight, const int tailLeft,
+                                                      const int minLeft) {
+  const int wanted = tailLeft - 2 - markRight;
+  const int floor = minLeft - markLeft;
+  int shiftX = wanted < floor ? floor : wanted;
+  if (shiftX > 0) shiftX = 0;
+  return {shiftX, markRight + shiftX <= tailLeft - 2};
+}
+
 }  // namespace combiningMark
 
 /// GCC/Clang (the ESP32 firmware toolchain) pack structs with __attribute__((packed)).

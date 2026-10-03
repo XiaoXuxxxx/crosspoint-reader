@@ -93,6 +93,14 @@ TEST(EmDashLineBreaking, MixedLatinAndCjkSplitsAtDash) {
   EXPECT_EQ(wordsOf(lines), expected);
 }
 
+TEST(EmDashLineBreaking, MixedThaiLatinKeepsCompoundBreaksWithoutStretching) {
+  const auto wide = layout({"ไทยwell-being"}, /*hyphenation=*/false, 180);
+  ASSERT_EQ(wordsOf(wide), (std::vector<std::vector<std::string>>{{"ไทย", "well-", "being"}}));
+  EXPECT_EQ(wide[0].xpos[2] - wide[0].xpos[1], 40);
+  const auto narrow = layout({"ไทยwell-being"}, /*hyphenation=*/false, 64);
+  EXPECT_EQ(wordsOf(narrow), (std::vector<std::vector<std::string>>{{"ไทย", "well-"}, {"being"}}));
+}
+
 TEST(EmDashLineBreaking, MixedCjkMultiEmDashStaysTogether) {
   // "漢" (8 px), "字——" (24 px), "bar" (24 px). Width 35 px fits "漢字——", but wraps "bar".
   const auto lines = layout({"漢字——bar"}, /*hyphenation=*/false, 35);

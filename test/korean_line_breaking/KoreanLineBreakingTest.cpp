@@ -231,3 +231,101 @@ TEST(ClippingAnchors, DenseNfdHangulSurvivesChunkRetirement) {
   text.layoutAndExtractLines(renderer, 0, 80, inspect);
   EXPECT_EQ(covered, 6u * 66 + 5);
 }
+
+// Thai has no spaces or hyphens: a word wider than the line splits between clusters,
+// never before a mark or the Sara Aa of a decomposed Sara Am, and without a hyphen.
+TEST(ClippingAnchors, ThaiSourceCoverageSurvivesNormalizationAndCacheRoundTrip) {
+  Hyphenator::setPreferredLanguage("th");
+  GfxRenderer renderer;
+  const auto path = (std::filesystem::temp_directory_path() / "crosspoint-thai-source-ranges.bin").string();
+  struct Sample {
+    const char* text;
+    uint32_t length;
+  };
+  for (const auto& sample : {Sample{"กำ", 2}, Sample{"กํา", 3}, Sample{"น้ำค้าง", 7}, Sample{"นํ้าค้าง", 8},
+                             Sample{"Cafe\xCC\x81กำ", 7}, Sample{"กำCafe\xCC\x81", 7}, Sample{"กํากำ", 5}}) {
+    for (const int width : {32, 180}) {
+      for (const bool focus : {false, true}) {
+        BlockStyle style;
+        style.textIndentDefined = true;
+        ParsedText text(true, focus, style, 0);
+        text.addWord(sample.text, EpdFontFamily::REGULAR, false, false, 100);
+        text.addWord("X", EpdFontFamily::REGULAR, false, false, 101 + sample.length);
+        unsigned coverage[16] = {};
+        text.layoutAndExtractLines(renderer, 0, width, [&](std::unique_ptr<TextBlock> block, auto) {
+          {
+            HalFile file;
+            ASSERT_TRUE(file.open(path.c_str(), "wb"));
+            ASSERT_TRUE(block->serialize(file));
+          }
+          HalFile file;
+          ASSERT_TRUE(file.open(path.c_str(), "rb"));
+          auto restored = TextBlock::deserialize(file);
+          ASSERT_NE(restored, nullptr);
+          for (uint16_t i = 0; i < restored->wordCount(); ++i) {
+            const auto range = restored->wordSourceRange(i);
+            ASSERT_GE(range.start, 100u);
+            ASSERT_LE(range.end, 102 + sample.length);
+            ASSERT_LT(range.start, range.end);
+            for (uint32_t offset = range.start; offset < range.end; ++offset) ++coverage[offset - 100];
+          }
+        });
+        for (uint32_t i = 0; i < sample.length + 2; ++i) {
+          EXPECT_EQ(coverage[i], i == sample.length ? 0u : 1u)
+              << sample.text << " width=" << width << " focus=" << focus << " offset=" << i;
+        }
+      }
+    }
+  }
+  std::filesystem::remove(path);
+}
+
+TEST(ClippingAnchors, DenseSaraAmSurvivesChunkRetirement) {
+  Hyphenator::setPreferredLanguage("th");
+  GfxRenderer renderer;
+  ParsedText text(true);
+  std::string word;
+  for (int i = 0; i < 22; ++i) word += "น้ำ";
+  for (uint32_t i = 0; i < 6; ++i) text.addWord(word, EpdFontFamily::REGULAR, false, false, 100 + i * 67);
+  uint32_t covered = 0;
+  auto inspect = [&](std::unique_ptr<TextBlock> block, auto) {
+    for (uint16_t i = 0; i < block->wordCount(); ++i) {
+      const auto range = block->wordSourceRange(i);
+      ASSERT_LT(range.start, range.end);
+      if (range.start >= 100000) {
+        EXPECT_EQ(range.start, 100000u);
+        EXPECT_EQ(range.end, 100003u);
+      } else {
+        EXPECT_EQ((range.start - 100) % 67 % 3, 0u);
+        EXPECT_EQ((range.end - 100) % 67 % 3, 0u);
+      }
+      covered += range.end - range.start;
+    }
+  };
+  text.layoutAndExtractLines(renderer, 0, 80, inspect, false);
+  text.addWord("กํา", EpdFontFamily::REGULAR, false, false, 100000);
+  text.layoutAndExtractLines(renderer, 0, 80, inspect);
+  EXPECT_EQ(covered, 6u * 66 + 3);
+}
+
+TEST(ThaiLineBreaking, OverlongWordSplitsBetweenClustersWithoutHyphen) {
+  Hyphenator::setPreferredLanguage("th");
+  GfxRenderer renderer;
+  BlockStyle style;
+  style.alignment = CssTextAlign::Left;
+  style.textIndentDefined = true;
+  ParsedText text(false, false, style, 0);
+  // น้ำค้าง lays out as five 8 px glyphs (marks are zero-width), wider than 32 px.
+  text.addWord("น้ำค้าง", EpdFontFamily::REGULAR, false, false, /*visibleTextOffset=*/1000);
+  std::vector<std::string> lines;
+  std::vector<uint32_t> offsets;
+  text.layoutAndExtractLines(renderer, 0, 32, [&](std::unique_ptr<TextBlock> block, const uint32_t offset) {
+    std::string line;
+    for (uint16_t i = 0; i < block->wordCount(); ++i) line += block->wordText(i);
+    lines.push_back(line);
+    offsets.push_back(offset);
+  });
+  EXPECT_EQ(lines, (std::vector<std::string>{utf8DecomposeThaiSaraAm("น้ำ"), "ค้าง"}));
+  // ค้าง starts after the three source codepoints of น้ำ.
+  EXPECT_EQ(offsets, (std::vector<uint32_t>{1000, 1003}));
+}
