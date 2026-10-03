@@ -4,7 +4,6 @@
 
 #include "Utf8ComposeTable.h"
 
-namespace {
 // Look up canonical composition, including algorithmic Hangul LV / LVT pairs.
 uint32_t utf8ComposePair(const uint32_t base, const uint32_t mark) {
   if (base >= 0x1100 && base <= 0x1112 && mark >= 0x1161 && mark <= 0x1175) {
@@ -29,7 +28,6 @@ uint32_t utf8ComposePair(const uint32_t base, const uint32_t mark) {
   }
   return 0;
 }
-}  // namespace
 
 uint32_t utf8DecomposedBase(const uint32_t cp) {
   if (cp < 0x00C0) return 0;  // no precomposed Latin letter below this
@@ -125,6 +123,56 @@ void utf8ComposeNfcInPlace(char* buffer) {
   *write = '\0';
 }
 
+size_t utf8LastCodepointStart(const char* buf, const size_t len) {
+  if (len == 0) return 0;
+  size_t pos = len - 1;
+  while (pos > 0 && (static_cast<unsigned char>(buf[pos]) & 0xC0) == 0x80) {
+    --pos;
+  }
+  return pos;
+}
+
+std::string utf8DecomposeThaiSaraAm(std::string in) {
+  // Decompose U+0E33 (Sara Am) → U+0E4D (Nikhahit) + U+0E32 (Sara Aa).
+  // If tone marks (U+0E48-0E4B) precede, Nikhahit moves before them:
+  //   <C, tone, 0E33> → <C, 0E4D, tone, 0E32>
+  // This matches gen_thai_lexicon.py decompose_sara_am() exactly.
+  //
+  // Sara Am (U+0E33) encodes as 0xE0 0xB8 0xB3; if absent, return without allocating output.
+  size_t saraAmCount = 0;
+  for (size_t i = 0; i + 2 < in.size(); ++i) {
+    if (static_cast<unsigned char>(in[i]) == 0xE0 && static_cast<unsigned char>(in[i + 1]) == 0xB8 &&
+        static_cast<unsigned char>(in[i + 2]) == 0xB3) {
+      ++saraAmCount;
+    }
+  }
+  if (saraAmCount == 0) return in;
+
+  std::string out;
+  out.reserve(in.size() + saraAmCount * 3);  // each U+0E33 (3 bytes) becomes U+0E4D + U+0E32 (6 bytes)
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(in.c_str());
+  while (*p) {
+    const uint32_t cp = utf8NextCodepoint(&p);
+    if (cp == 0) break;
+    if (cp == 0x0E33) {
+      // Insert Nikhahit before any trailing tone marks, preserving their order without temporary strings.
+      size_t toneStart = out.size();
+      while (toneStart > 0) {
+        const size_t pos = utf8LastCodepointStart(out.data(), toneStart);
+        const unsigned char* cpPtr = reinterpret_cast<const unsigned char*>(out.c_str() + pos);
+        const uint32_t lastCp = utf8NextCodepoint(&cpPtr);
+        if (lastCp < 0x0E48 || lastCp > 0x0E4B) break;
+        toneStart = pos;
+      }
+      out.insert(toneStart, "\xE0\xB9\x8D", 3);  // Nikhahit before tones.
+      utf8AppendCodepoint(0x0E32, out);          // Sara Aa (base vowel, advances cursor)
+    } else {
+      utf8AppendCodepoint(cp, out);
+    }
+  }
+  return out;
+}
+
 int utf8CodepointLen(const unsigned char c) {
   if (c < 0x80) return 1;          // 0xxxxxxx
   if ((c >> 5) == 0x6) return 2;   // 110xxxxx
@@ -209,10 +257,7 @@ int utf8SafeTruncateBuffer(const char* buf, int len) {
 
 size_t utf8RemoveLastChar(std::string& str) {
   if (str.empty()) return 0;
-  size_t pos = str.size() - 1;
-  while (pos > 0 && (static_cast<unsigned char>(str[pos]) & 0xC0) == 0x80) {
-    --pos;
-  }
+  const size_t pos = utf8LastCodepointStart(str.data(), str.size());
   str.resize(pos);
   return pos;
 }

@@ -90,6 +90,13 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 68
+
+The serialized layout is unchanged from version 67. Thai lexicon word segmentation
+and Sara Am (U+0E33) decomposition change cached words and line breaks. Word offsets
+remain based on the original source codepoints. Completed and partial section caches
+rebuild automatically; book metadata and reading progress are kept.
+
 ### Version 67
 
 Version 67 preserves the binary layout but rebuilds completed and partial
@@ -352,7 +359,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 64
+#define EXPECTED_VERSION 68
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256

@@ -67,11 +67,12 @@ class ParsedText {
   std::vector<uint16_t> wordVisibleOffsetDeltas;
   uint32_t visibleOffsetBase = 0;
   std::vector<VisibleOffsetRebase> visibleOffsetRebases;
-  // Sparse NFC source positions, in small nothrow chunks rather than a large contiguous array.
+  // Sparse NFC absorptions and Sara Am expansions, in small nothrow chunks.
   struct AbsorbedSourceChunk {
     std::unique_ptr<AbsorbedSourceChunk> next;
     uint32_t base = 0;
     uint16_t deltas[64] = {};
+    uint64_t expanded = 0;
     uint8_t begin = 0;
     uint8_t count = 0;
     ~AbsorbedSourceChunk() {
@@ -112,7 +113,7 @@ class ParsedText {
   uint32_t visibleOffsetBaseAt(size_t wordIndex) const;
   uint32_t visibleOffsetAt(size_t wordIndex) const;
   uint32_t sourceOffsetAfter(uint32_t start, uint32_t renderedLength) const;
-  bool recordAbsorbedSourceOffset(uint32_t offset);
+  bool recordSourceOffsetChange(uint32_t offset, bool expanded = false);
   void retireAbsorbedSourceOffsets(uint32_t remainingStart);
   void pushVisibleOffset(uint32_t offset);
   void insertVisibleOffset(size_t wordIndex, uint32_t offset);
