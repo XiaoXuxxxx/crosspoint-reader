@@ -98,8 +98,8 @@ class GfxRenderer {
   mutable int clipRight_ = 32767;
   mutable int clipBottom_ = 32767;
 
-  // CJK UI font fallback map: primary (built-in, Latin-only) UI font id -> a
-  // size-matched SD-card font id that carries CJK glyphs. When a string drawn
+  // CJK UI font fallback map: built-in UI font ids without CJK coverage ->
+  // size-matched SD-card font ids that carry it. When a string drawn
   // or measured with a mapped primary font contains a CJK codepoint the primary
   // cannot render, the whole string is routed to the mapped fallback so it
   // appears at the same point size as the surrounding UI text. Populated by the

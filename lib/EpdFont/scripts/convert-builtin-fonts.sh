@@ -11,8 +11,15 @@ for size in ${NOTOSANS_FONT_SIZES[@]}; do
   for style in ${READER_FONT_STYLES[@]}; do
     font_name="notosans_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
+    # shortcut: Thai italic runs use upright glyphs, switch when an italic Thai face is available.
+    thai_style="Regular"
+    if [[ "$style" == "Bold" || "$style" == "BoldItalic" ]]; then
+      thai_style="Bold"
+    fi
+    thai_font_path="../builtinFonts/source/NotoSansThai/NotoSansThai-${thai_style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum --zopfli > $output_path
+    python fontconvert.py $font_name $size $font_path $thai_font_path \
+      --additional-intervals 0x0E00,0x0E7F --2bit --compress --pnum --zopfli > $output_path
     echo "Generated $output_path"
   done
 done
@@ -62,21 +69,27 @@ for size in ${UI_FONT_SIZES[@]}; do
     # are filled from it while every glyph Ubuntu already has stays unchanged
     # (fontstack is ordered by descending priority).
     viet_path="../builtinFonts/source/Ubuntu/Ubuntu-Vietnamese-${style}.ttf"
+    # Ubuntu lacks the Thai block (U+0E00-U+0E7F). Append NotoSansThai so Thai
+    # glyphs are filled from it; the --additional-intervals below exports the
+    # Thai code point range (converter self-trims unassigned/missing glyphs).
+    thai_path="../builtinFonts/source/NotoSansThai/NotoSansThai-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $latin_fallback_path $hebrew_path $arabic_path $viet_path \
-      --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" > $output_path
+    python fontconvert.py $font_name $size $font_path $latin_fallback_path $hebrew_path $arabic_path $viet_path $thai_path \
+      --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" --additional-intervals 0x0E00,0x0E7F > $output_path
     echo "Generated $output_path"
   done
 done
 
 # The small UI face is Ubuntu too, so UI text stays in one family at every size.
+# Append NotoSansThai so Thai button hints and subtitles do not render as tofu.
 python fontconvert.py ubuntu_8_regular 8 \
   ../builtinFonts/source/Ubuntu/Ubuntu-Regular.ttf \
   ../builtinFonts/source/NotoSans/NotoSans-Regular.ttf \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
   ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
   ../builtinFonts/source/Ubuntu/Ubuntu-Vietnamese-Regular.ttf \
-  --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" > ../builtinFonts/ubuntu_8_regular.h
+  ../builtinFonts/source/NotoSansThai/NotoSansThai-Regular.ttf \
+  --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" --additional-intervals 0x0E00,0x0E7F > ../builtinFonts/ubuntu_8_regular.h
 
 echo ""
 echo "Running compression verification..."
