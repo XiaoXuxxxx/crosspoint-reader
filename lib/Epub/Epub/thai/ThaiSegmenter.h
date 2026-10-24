@@ -1,21 +1,33 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <string>
-#include <vector>
 
 // Returns true if `text` contains any Thai codepoint (U+0E01–U+0E5B).
 // Used to gate the Thai segmentation path before the CJK fallback.
 bool containsThaiCodepoint(const std::string& text);
 
-// Returns byte offsets within `text` where line breaks are allowed for Thai
+// Reusable storage for bounded Thai segmentation. ChapterHtmlSlimParser limits
+// source words to 200 bytes, so one contains at most 66 Thai codepoints. Keep
+// this heap-owned with ParsedText instead of allocating once per source word.
+struct ThaiSegmentationScratch {
+  struct Cluster {
+    size_t startOffset;
+    size_t endOffset;
+  };
+
+  static constexpr size_t MAX_CLUSTERS = 67;
+  static constexpr size_t MAX_BREAK_OFFSETS = 200;
+  std::array<Cluster, MAX_CLUSTERS> clusters;
+  std::array<size_t, MAX_BREAK_OFFSETS> breakOffsets;
+  size_t clusterCount = 0;
+  size_t breakCount = 0;
+};
+
+// Writes byte offsets within `text` where line breaks are allowed for Thai
 // script. Uses forward maximal matching against a flash-resident dictionary
-// to find word boundaries, and also adds breaks at Thai<->non-Thai transitions.
-//
-// Returns an empty vector if:
-//   - `text` contains no Thai codepoints (caller should fall through to CJK),
-//   - or the text is a single Thai word with no internal break opportunities
-//     (caller should push it as one token, NOT fall through to CJK which would
-//     split at every character).
-//
-// Use containsThaiCodepoint() first to distinguish these two cases.
-std::vector<size_t> thaiWordBreakByteOffsets(const std::string& text);
+// and adds breaks at Thai<->non-Thai transitions. Returns false if `text`
+// exceeds the fixed scratch capacity; the caller must fail the affected build
+// rather than silently losing legal line breaks.
+bool thaiWordBreakByteOffsets(const std::string& text, ThaiSegmentationScratch& scratch);

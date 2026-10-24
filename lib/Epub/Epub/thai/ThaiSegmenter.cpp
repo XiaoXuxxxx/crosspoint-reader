@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <vector>
 
 #include "ThaiLexicon.h"
 #include "generated/thaiLexicon.generated.h"
@@ -31,19 +30,13 @@ inline bool isThaiDigit(uint32_t cp) { return cp >= 0x0E50 && cp <= 0x0E59; }
 // them; lexicon words still end on a cluster boundary.
 inline bool isThaiFollowingVowel(uint32_t cp) { return cp == 0x0E30 || cp == 0x0E32 || cp == 0x0E45; }
 
-struct ThaiCluster {
-  size_t startOffset;  // byte offset of base char
-  size_t endOffset;    // byte offset just past last mark (or base if no marks)
-};
-
 // Parse a Thai run into clusters: each cluster is a base char + its following
 // combining marks (vowels, tone marks) and spacing vowels. A leading vowel is
 // grouped with the following consonant cluster, a run of Thai digits forms one
 // cluster, and an orphan combining mark may start a cluster when the source is
 // malformed.
-std::vector<ThaiCluster> parseClusters(const std::string& text, size_t start, size_t end) {
-  std::vector<ThaiCluster> clusters;
-  clusters.reserve((end - start) / 3);  // Thai codepoints are 3 UTF-8 bytes; a cluster is >= 1 codepoint.
+bool parseClusters(const std::string& text, const size_t start, const size_t end, ThaiSegmentationScratch& scratch) {
+  scratch.clusterCount = 0;
   const auto* base = reinterpret_cast<const unsigned char*>(text.c_str());
   const auto* ptr = base + start;
   const auto* const endPtr = base + end;
@@ -73,9 +66,10 @@ std::vector<ThaiCluster> parseClusters(const std::string& text, size_t start, si
       ptr = beforeCp;
       break;
     }
-    clusters.push_back({clusterStart, static_cast<size_t>(ptr - base)});
+    if (scratch.clusterCount == scratch.clusters.size()) return false;
+    scratch.clusters[scratch.clusterCount++] = {clusterStart, static_cast<size_t>(ptr - base)};
   }
-  return clusters;
+  return true;
 }
 
 // No line may start with a sign that closes a syllable or word (Mai Yamok and
@@ -92,20 +86,20 @@ bool thaiBreakAllowedAt(const std::string& text, const size_t offset) {
 // Segment a Thai run using forward maximal matching against the lexicon.
 // Adds word-boundary byte offsets to `breaks`. Unknown sequences fall back to
 // single-cluster tokens (equivalent to the old char-level break behavior).
-void segmentThaiRun(const std::string& text, size_t start, size_t end, const ThaiLexicon& lexicon,
-                    std::vector<size_t>& breaks) {
-  auto clusters = parseClusters(text, start, end);
-  if (clusters.size() < 2) return;
+bool segmentThaiRun(const std::string& text, const size_t start, const size_t end, const ThaiLexicon& lexicon,
+                    ThaiSegmentationScratch& scratch) {
+  if (!parseClusters(text, start, end, scratch)) return false;
+  if (scratch.clusterCount < 2) return true;
 
   size_t pos = 0;
-  while (pos < clusters.size()) {
+  while (pos < scratch.clusterCount) {
     // Default: single cluster (no lexicon match). This means unknown words
     // break at every cluster, matching the previous char-level behavior.
     size_t bestEnd = pos;
-    const size_t maxLen = std::min(MAX_WORD_CLUSTERS, clusters.size() - pos);
+    const size_t maxLen = std::min(MAX_WORD_CLUSTERS, scratch.clusterCount - pos);
     for (size_t len = maxLen; len >= 2; --len) {
-      const size_t substrStart = clusters[pos].startOffset;
-      const size_t substrEnd = clusters[pos + len - 1].endOffset;
+      const size_t substrStart = scratch.clusters[pos].startOffset;
+      const size_t substrEnd = scratch.clusters[pos + len - 1].endOffset;
       const size_t substrLen = substrEnd - substrStart;
       if (substrLen >= MAX_LOOKUP_BYTES) continue;
       if (thaiLexiconContains(lexicon, text.c_str() + substrStart, substrLen)) {
@@ -114,11 +108,13 @@ void segmentThaiRun(const std::string& text, size_t start, size_t end, const Tha
       }
     }
     // Add break at end of this word (if not at the end of the run).
-    if (bestEnd + 1 < clusters.size()) {
-      breaks.push_back(clusters[bestEnd].endOffset);
+    if (bestEnd + 1 < scratch.clusterCount) {
+      if (scratch.breakCount == scratch.breakOffsets.size()) return false;
+      scratch.breakOffsets[scratch.breakCount++] = scratch.clusters[bestEnd].endOffset;
     }
     pos = bestEnd + 1;
   }
+  return true;
 }
 
 }  // namespace
@@ -133,17 +129,15 @@ bool containsThaiCodepoint(const std::string& text) {
   return false;
 }
 
-std::vector<size_t> thaiWordBreakByteOffsets(const std::string& text) {
-  std::vector<size_t> breaks;
-  breaks.reserve(text.size() / 3 + 1);  // Generous upper bound: breaks are far rarer than codepoints.
-
+bool thaiWordBreakByteOffsets(const std::string& text, ThaiSegmentationScratch& scratch) {
+  scratch.breakCount = 0;
   const auto* base = reinterpret_cast<const unsigned char*>(text.c_str());
   const auto* ptr = base;
   bool hasThai = false;
 
   while (*ptr) {
     const auto* runStart = ptr;
-    uint32_t cp = utf8NextCodepoint(&ptr);
+    const uint32_t cp = utf8NextCodepoint(&ptr);
     if (cp == 0) break;
 
     if (utf8IsThaiCodepoint(cp)) {
@@ -151,7 +145,7 @@ std::vector<size_t> thaiWordBreakByteOffsets(const std::string& text) {
       // Find end of the Thai run (maximal sequence of Thai codepoints).
       while (*ptr) {
         const auto* beforeCp = ptr;
-        uint32_t nextCp = utf8NextCodepoint(&ptr);
+        const uint32_t nextCp = utf8NextCodepoint(&ptr);
         if (nextCp == 0 || !utf8IsThaiCodepoint(nextCp)) {
           ptr = beforeCp;
           break;
@@ -162,28 +156,31 @@ std::vector<size_t> thaiWordBreakByteOffsets(const std::string& text) {
 
       // Break before the Thai run (Thai -> non-Thai boundary).
       if (runStartOffset > 0) {
-        breaks.push_back(runStartOffset);
+        if (scratch.breakCount == scratch.breakOffsets.size()) return false;
+        scratch.breakOffsets[scratch.breakCount++] = runStartOffset;
       }
 
       // Segment the Thai run into words.
-      segmentThaiRun(text, runStartOffset, runEndOffset, getThaiLexicon(), breaks);
+      if (!segmentThaiRun(text, runStartOffset, runEndOffset, getThaiLexicon(), scratch)) return false;
 
       // Break after the Thai run (non-Thai -> Thai boundary).
       if (runEndOffset < text.size()) {
-        breaks.push_back(runEndOffset);
+        if (scratch.breakCount == scratch.breakOffsets.size()) return false;
+        scratch.breakOffsets[scratch.breakCount++] = runEndOffset;
       }
     }
   }
 
-  if (!hasThai) return {};
+  if (!hasThai) return true;
 
   // Sort and dedup breaks (Thai/non-Thai boundaries may coincide with word
   // boundaries from segmentThaiRun).
-  std::sort(breaks.begin(), breaks.end());
-  breaks.erase(std::unique(breaks.begin(), breaks.end()), breaks.end());
-  breaks.erase(std::remove_if(breaks.begin(), breaks.end(),
-                              [&](const size_t offset) { return !thaiBreakAllowedAt(text, offset); }),
-               breaks.end());
+  auto breakEnd = scratch.breakOffsets.begin() + scratch.breakCount;
+  std::sort(scratch.breakOffsets.begin(), breakEnd);
+  breakEnd = std::unique(scratch.breakOffsets.begin(), breakEnd);
+  breakEnd = std::remove_if(scratch.breakOffsets.begin(), breakEnd,
+                            [&](const size_t offset) { return !thaiBreakAllowedAt(text, offset); });
+  scratch.breakCount = static_cast<size_t>(breakEnd - scratch.breakOffsets.begin());
 
-  return breaks;
+  return true;
 }

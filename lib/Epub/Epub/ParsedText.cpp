@@ -696,15 +696,15 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   // (CJK/Thai text has no inter-word spaces), so both need the up-front
   // capacity reservation and the same first-token-attaches /
   // later-tokens-no-space rule.
-  const auto pushBrokenWord = [&](const std::vector<size_t>& breakOffsets) {
-    if (breakOffsets.empty()) {
+  const auto pushBrokenWord = [&](const size_t* const breakOffsets, const size_t breakCount) {
+    if (breakCount == 0) {
       pushToken(word, effectiveAttachToPrevious, effectiveNoSpaceBefore, /*focusBoundary=*/0, visibleTextOffset);
       return;
     }
     // CJK/Thai-heavy paragraphs can push hundreds of tiny tokens quickly when CSS
     // toggles inline styles. Reserve once up front to avoid repeated vector growth
     // reallocations.
-    ensureTokenCapacity(breakOffsets.size() + 1);
+    ensureTokenCapacity(breakCount + 1);
     // Token offsets map back to source codepoints: NFC composition and Sara Am
     // decomposition change the codepoint count between source and rendered text.
     VisibleTextOffset::SourceCodepointCounter sourceCodepoints(sourceWord, word);
@@ -713,7 +713,8 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     };
     bool firstToken = true;
     size_t tokenStart = 0;
-    for (const size_t breakOffset : breakOffsets) {
+    for (size_t breakIndex = 0; breakIndex < breakCount; ++breakIndex) {
+      const size_t breakOffset = breakOffsets[breakIndex];
       if (breakOffset <= tokenStart || breakOffset > word.size()) continue;
       const std::string_view token(word.data() + tokenStart, breakOffset - tokenStart);
       const bool attach = firstToken ? effectiveAttachToPrevious
@@ -732,18 +733,50 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   };
 
   const bool hasThai = containsThaiCodepoint(word);
-  auto breakOffsets = cjkCharacterBreakByteOffsets(word);
+  auto cjkBreakOffsets = cjkCharacterBreakByteOffsets(word);
   if (hasThai) {
-    const auto thaiBreakOffsets = thaiWordBreakByteOffsets(word);
-    breakOffsets.reserve(breakOffsets.size() + thaiBreakOffsets.size());
+    if (!thaiSegmentationScratch) {
+      thaiSegmentationScratch = makeUniqueNoThrow<ThaiSegmentationScratch>();
+      if (!thaiSegmentationScratch) {
+        if (!droppedWords) {
+          LOG_ERR("PTX", "OOM: %u-byte Thai segmentation scratch",
+                  static_cast<unsigned>(sizeof(ThaiSegmentationScratch)));
+        }
+        droppedWords = true;
+        return;
+      }
+    }
+
+    auto& thaiScratch = *thaiSegmentationScratch;
+    if (!thaiWordBreakByteOffsets(word, thaiScratch)) {
+      if (!droppedWords) {
+        LOG_ERR("PTX", "Thai word exceeds segmentation scratch capacity");
+      }
+      droppedWords = true;
+      return;
+    }
+
+    const auto insertThaiBreak = [&](const size_t offset) {
+      auto breakEnd = thaiScratch.breakOffsets.begin() + thaiScratch.breakCount;
+      const auto position = std::lower_bound(thaiScratch.breakOffsets.begin(), breakEnd, offset);
+      if (position != breakEnd && *position == offset) return true;
+      if (thaiScratch.breakCount == thaiScratch.breakOffsets.size()) return false;
+      std::move_backward(position, breakEnd, breakEnd + 1);
+      *position = offset;
+      ++thaiScratch.breakCount;
+      return true;
+    };
+
     const auto* const wordStart = reinterpret_cast<const unsigned char*>(word.data());
     const auto* const wordEnd = wordStart + word.size();
-    for (const size_t offset : thaiBreakOffsets) {
+    size_t keptThaiBreaks = 0;
+    for (size_t breakIndex = 0; breakIndex < thaiScratch.breakCount; ++breakIndex) {
+      const size_t offset = thaiScratch.breakOffsets[breakIndex];
       const auto* right = wordStart + offset;
       const uint32_t rightCp = utf8NextCodepoint(&right);
       const uint32_t leftCp = lastCodepoint(std::string_view(word.data(), offset));
       if (thaiBoundaryAllowsBreak(leftCp, rightCp)) {
-        breakOffsets.push_back(offset);
+        thaiScratch.breakOffsets[keptThaiBreaks++] = offset;
         continue;
       }
       if (!isNoBreakBeforeCjkPunctuation(rightCp)) continue;
@@ -754,7 +787,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         if (!isNoBreakBeforeCjkPunctuation(nextCp)) {
           if (thaiBoundaryAllowsBreak(punctuationCp, nextCp) && !utf8IsCombiningMark(nextCp) &&
               !utf8IsThaiNonStarter(nextCp)) {
-            breakOffsets.push_back(static_cast<size_t>(right - wordStart));
+            thaiScratch.breakOffsets[keptThaiBreaks++] = static_cast<size_t>(right - wordStart);
           }
           break;
         }
@@ -762,15 +795,40 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         right = next;
       }
     }
-    const auto hyphenBreakOffsets = explicitHyphenBreakByteOffsets(word, effectiveAttachToPrevious);
-    breakOffsets.reserve(breakOffsets.size() + hyphenBreakOffsets.size());
-    breakOffsets.insert(breakOffsets.end(), hyphenBreakOffsets.begin(), hyphenBreakOffsets.end());
-    std::sort(breakOffsets.begin(), breakOffsets.end());
-    breakOffsets.erase(std::unique(breakOffsets.begin(), breakOffsets.end()), breakOffsets.end());
+    thaiScratch.breakCount = keptThaiBreaks;
+    auto thaiBreakEnd = thaiScratch.breakOffsets.begin() + thaiScratch.breakCount;
+    std::sort(thaiScratch.breakOffsets.begin(), thaiBreakEnd);
+    thaiBreakEnd = std::unique(thaiScratch.breakOffsets.begin(), thaiBreakEnd);
+    thaiScratch.breakCount = static_cast<size_t>(thaiBreakEnd - thaiScratch.breakOffsets.begin());
+
+    for (const size_t offset : cjkBreakOffsets) {
+      if (!insertThaiBreak(offset)) {
+        if (!droppedWords) {
+          LOG_ERR("PTX", "Thai word has too many line breaks");
+        }
+        droppedWords = true;
+        return;
+      }
+    }
+    for (const size_t offset : explicitHyphenBreakByteOffsets(word, effectiveAttachToPrevious)) {
+      if (!insertThaiBreak(offset)) {
+        if (!droppedWords) {
+          LOG_ERR("PTX", "Thai word has too many line breaks");
+        }
+        droppedWords = true;
+        return;
+      }
+    }
+
+    pushBrokenWord(thaiScratch.breakOffsets.data(), thaiScratch.breakCount);
+    if (wordStartsRtl) {
+      hasRtlWord = true;
+    }
+    return;
   }
 
-  if (!breakOffsets.empty()) {
-    pushBrokenWord(breakOffsets);
+  if (!cjkBreakOffsets.empty()) {
+    pushBrokenWord(cjkBreakOffsets.data(), cjkBreakOffsets.size());
     if (wordStartsRtl) {
       hasRtlWord = true;
     }
@@ -779,21 +837,6 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
 
   if (containsCjkBreakableCodepoint(word)) {
     pushToken(word, effectiveAttachToPrevious, effectiveNoSpaceBefore, /*focusBoundary=*/0, visibleTextOffset);
-    if (wordStartsRtl) {
-      hasRtlWord = true;
-    }
-    return;
-  }
-
-  // Thai word-break segmentation via lexicon forward maximal matching.
-  // containsThaiCodepoint() gates this path. thaiWordBreakByteOffsets() returns
-  // cluster-aligned break offsets (never inside a base+mark group), so each
-  // token renders as one self-contained drawText with no cross-token mark
-  // dependency. An empty offsets vector means a single unsplittable Thai word;
-  // pushBrokenWord pushes it as one token (do NOT fall through to CJK, which
-  // would char-split).
-  if (hasThai) {
-    pushBrokenWord(breakOffsets);
     if (wordStartsRtl) {
       hasRtlWord = true;
     }

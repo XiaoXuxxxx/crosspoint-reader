@@ -29,12 +29,18 @@ bool containsBreak(const std::vector<size_t>& breaks, const size_t offset) {
   return std::find(breaks.begin(), breaks.end(), offset) != breaks.end();
 }
 
+std::vector<size_t> thaiBreakOffsets(const std::string& text) {
+  ThaiSegmentationScratch scratch;
+  if (!thaiWordBreakByteOffsets(text, scratch)) return {};
+  return {scratch.breakOffsets.begin(), scratch.breakOffsets.begin() + scratch.breakCount};
+}
+
 }  // namespace
 
 TEST(ThaiSegmentation, SaraAmExpansionIsOneAtomicCluster) {
   const std::string source = K_THAI_SOURCE;
   const std::string rendered = utf8DecomposeThaiSaraAm(source);
-  const auto breaks = thaiWordBreakByteOffsets(rendered);
+  const auto breaks = thaiBreakOffsets(rendered);
 
   // ก + U+0E4D occupies six bytes; U+0E32 starts at byte six and must not be
   // a token start. The legal boundary after the complete expansion is byte 9.
@@ -72,16 +78,31 @@ TEST(ThaiSegmentation, SaraAmPreservesLongToneRuns) {
 
 TEST(ThaiSegmentation, ExplicitNikhahitSaraAaPairIsAlsoAtomic) {
   const std::string source = K_EXPLICIT_DECOMPOSED;
-  const auto breaks = thaiWordBreakByteOffsets(source);
+  const auto breaks = thaiBreakOffsets(source);
 
   EXPECT_FALSE(containsBreak(breaks, 6));
   EXPECT_TRUE(containsBreak(breaks, 9));
   EXPECT_EQ(VisibleTextOffset::originalCodepointsBeforeRenderedOffset(source, source, 9), 3U);
 }
 
+TEST(ThaiSegmentation, ScratchCoversTheParserWordBound) {
+  ThaiSegmentationScratch scratch;
+  std::string text;
+  for (size_t i = 0; i < ThaiSegmentationScratch::MAX_CLUSTERS - 1; ++i) {
+    utf8AppendCodepoint(0x0E01, text);
+  }
+
+  EXPECT_TRUE(thaiWordBreakByteOffsets(text, scratch));
+  EXPECT_LE(scratch.breakCount, scratch.breakOffsets.size());
+
+  utf8AppendCodepoint(0x0E01, text);
+  utf8AppendCodepoint(0x0E01, text);
+  EXPECT_FALSE(thaiWordBreakByteOffsets(text, scratch));
+}
+
 TEST(ThaiSegmentation, LexiconFindsTheTwoWordsInThai) {
   const std::string text = K_THAI_MULTIWORD;
-  const auto breaks = thaiWordBreakByteOffsets(text);
+  const auto breaks = thaiBreakOffsets(text);
 
   // ภาษา and ไทย are both lexicon entries. Maximal matching must not fall
   // back to one break per Thai cluster.
@@ -94,7 +115,7 @@ TEST(ThaiSegmentation, NfcContractionPreservesThaiVisibleOffset) {
   const std::string expected = std::string("\xC3\xA1") + K_THAI_LANGUAGE;
 
   EXPECT_EQ(rendered, expected);
-  const auto breaks = thaiWordBreakByteOffsets(rendered);
+  const auto breaks = thaiBreakOffsets(rendered);
   EXPECT_EQ(breaks, (std::vector<size_t>{2}));
   EXPECT_EQ(VisibleTextOffset::originalCodepointsBeforeRenderedOffset(source, rendered, breaks.front()), 2U);
   EXPECT_EQ(VisibleTextOffset::originalCodepointsBeforeRenderedOffset(source, rendered, rendered.size()), 6U);
@@ -115,7 +136,7 @@ namespace {
 std::vector<std::string> thaiTokens(const std::string& text) {
   std::vector<std::string> tokens;
   size_t start = 0;
-  for (const size_t offset : thaiWordBreakByteOffsets(text)) {
+  for (const size_t offset : thaiBreakOffsets(text)) {
     tokens.push_back(text.substr(start, offset - start));
     start = offset;
   }

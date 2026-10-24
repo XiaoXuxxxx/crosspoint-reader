@@ -12,6 +12,7 @@
 #include "WordStore.h"
 #include "blocks/BlockStyle.h"
 #include "blocks/TextBlock.h"
+#include "thai/ThaiSegmenter.h"
 
 class GfxRenderer;
 
@@ -29,6 +30,7 @@ class ParsedText {
   // The per-token parallel arrays below stay vectors: 1 byte / 1 bit each,
   // they never approach the contiguous-block ceiling.
   WordStore wordStore;
+  std::unique_ptr<ThaiSegmentationScratch> thaiSegmentationScratch;
   std::deque<WordStore::StoredWord> words;
   std::vector<EpdFontFamily::Style> wordStyles;
   // Boundary flags use all four combinations:
