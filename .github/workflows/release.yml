@@ -11,7 +11,22 @@ permissions:
   contents: read
 
 jobs:
+  validate-thai-preview:
+    if: ${{ startsWith(github.event.release.tag_name, 'release/thai-font-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Thai preview release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^release/thai-font-[0-9]{8}-[0-9a-f]{8}$ ]] && test "$RELEASE_PRERELEASE" = "true"
+
   build-release:
+    # Thai previews are hand-built for the shared C3 X3/X4 target and uploaded
+    # by the publisher; do not spend CI time building unrelated board profiles.
+    if: ${{ !startsWith(github.event.release.tag_name, 'release/thai-font-') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -54,16 +69,11 @@ jobs:
         run: |
           set -euo pipefail
           configured_version="$(sed -n 's/^version = //p' platformio.ini | head -n1)"
-          if [[ "$RELEASE_TAG" =~ ^release/thai-font-[0-9]{8}-[0-9a-f]{8}$ ]]; then
-            # Thai preview tags are custom; keep them prereleases so OTA's stable-release feed ignores them.
-            test "$RELEASE_PRERELEASE" = "true"
+          version="${RELEASE_TAG#v}"
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then
+            test "$version" = "${configured_version}rc"
           else
-            version="${RELEASE_TAG#v}"
-            if [ "$RELEASE_PRERELEASE" = "true" ]; then
-              test "$version" = "${configured_version}rc"
-            else
-              test "$version" = "$configured_version"
-            fi
+            test "$version" = "$configured_version"
           fi
 
       - uses: actions/setup-python@v6
@@ -136,6 +146,7 @@ jobs:
 
   publish-release:
     needs: build-release
+    if: ${{ !startsWith(github.event.release.tag_name, 'release/thai-font-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
