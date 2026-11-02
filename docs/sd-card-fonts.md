@@ -85,11 +85,12 @@ The Fonts page can delete families stored in subfolders.
 
 ## Non-Latin Scripts Fallback in the User Interface
 
-The built-in UI fonts are Latin-only, so by default the interface (book titles
-in the library, file names in the browser, list rows, headers) shows
-replacement boxes for non-Latin text — CJK, Greek, Cyrillic, Armenian, and any
-other script the SD-font converter ships an interval for — even when book
-*content* renders correctly with a selected SD-card font.
+The built-in UI fonts include Latin, Cyrillic, Hebrew letters, Vietnamese,
+Thai, and a limited set of Arabic forms. Other scripts — including CJK, Greek,
+and Armenian — show replacement boxes in the interface (book titles, file names,
+list rows, headers) unless a selected SD-card font covers them. An SD-card font
+can also supply UI glyphs missing from the built-in fonts while rendering book
+content normally.
 
 To avoid shipping every script's glyph set in flash, CrossPoint instead reuses
 the SD-card font you already selected: when a UI string contains a character
@@ -99,8 +100,8 @@ SD-card font instead.
 The fallback is **size-matched**. The built-in UI fonts render at 8 pt
 (small/author lines), 10 pt (list rows) and 12 pt (book-cover titles, headers),
 so CrossPoint loads your SD family at those sizes too and maps each UI font to
-its same-size SD font. Non-Latin book names therefore appear at the same size
-as the Latin text around them. A `.cpfont` family must contain files at sizes
+its same-size SD font. Names using this fallback therefore appear at the same
+size as the Latin text around them. A `.cpfont` family must contain files at sizes
 **8, 10 and 12** for this UI fallback (in addition to the reader sizes 12–18) —
 **missing these is the most common reason non-Latin UI text still shows
 replacement boxes even though the book itself renders fine.** Any missing UI
@@ -143,8 +144,11 @@ What this means in practice:
   that SD font is a `Mono` family, the Latin portion will appear half/full
   width.
 - If no SD font is selected (a built-in reading font is active), there is no
-  fallback and the UI again shows boxes for non-Latin text — pick an SD font
-  covering that script to restore it.
+  fallback for scripts outside built-in UI coverage — pick an SD font covering
+  those scripts to restore them. Thai EPUB text is included in the built-in
+  Noto Sans reader fonts and does not require an SD-card font. Thai glyphs in
+  italic and bold-italic runs remain upright because Noto Sans Thai has no
+  italic face.
 
 ## Available Pre-Built Fonts
 
