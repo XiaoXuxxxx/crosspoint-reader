@@ -1,5 +1,6 @@
 add_executable(Utf8ComposeTest
   Utf8ComposeTest.cpp
+  ThaiSegmentationTest.cpp
   ${REPO_ROOT}/lib/Utf8/Utf8.cpp
 )
 
@@ -9,6 +10,7 @@ target_include_directories(Utf8ComposeTest PRIVATE
 
 target_link_libraries(Utf8ComposeTest PRIVATE
   crosspoint_test_common
+  crosspoint_thai_segmenter
   GTest::gtest_main
 )
 

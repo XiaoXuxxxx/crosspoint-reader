@@ -90,6 +90,20 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 75
+
+The serialized layout is unchanged from version 74. Thai line breaks no longer
+separate the baht sign from its amount, or an ellipsis or percent sign from the Thai
+word before it. Completed and partial section caches rebuild automatically; book
+metadata and reading progress are kept.
+
+### Version 74
+
+The serialized layout is unchanged from version 73. Thai lexicon word segmentation
+and Sara Am (U+0E33) decomposition change cached words and line breaks. Word offsets
+remain based on the original source codepoints. Completed and partial section caches
+rebuild automatically; book metadata and reading progress are kept.
+
 ### Version 73
 
 Version 73 keeps the binary layout and rebuilds completed and partial sections.
